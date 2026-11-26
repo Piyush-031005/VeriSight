@@ -50,6 +50,8 @@ export const ExperimentsDashboard: React.FC = () => {
 
   const exp = data.experiments_summary;
   const txt = data.text_eval;
+  const aud = data.audio_eval_l2;
+  const exp3 = data.exp3_robustness;
   const ckpts = data.checkpoints || {};
   const exp2 = exp?.exp2_fusion_comparison || {};
   const exp4 = exp?.exp4_modality_ablation || {};
@@ -133,6 +135,22 @@ export const ExperimentsDashboard: React.FC = () => {
                   </tr>
                 </>
               )}
+              {aud?.in_domain && (
+                <>
+                  <tr>
+                    <td>Audio Only (XLS-R · ASVspoof 71k)</td>
+                    <td className="mono">{aud.in_domain.f1?.toFixed(4)}</td>
+                    <td className="mono">{aud.in_domain.auc?.toFixed(4)}</td>
+                    <td className="mono">—</td>
+                  </tr>
+                  <tr>
+                    <td>Audio OOD (Deepfake-Audio · 600)</td>
+                    <td className="mono">{aud.out_of_domain?.f1?.toFixed(4)}</td>
+                    <td className="mono">{aud.out_of_domain?.auc?.toFixed(4)}</td>
+                    <td className="mono">—</td>
+                  </tr>
+                </>
+              )}
               {['concat', 'cross_attention', 'consistency_gated'].map((k) => {
                 const row = exp2[k];
                 if (!row) return null;
@@ -209,6 +227,26 @@ export const ExperimentsDashboard: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* 4. Experiment 3 Generalization & Compression Stress Results (Laptop 2 Merged) */}
+      {exp3 && (
+        <div className="exp-panel" style={{ marginTop: 22 }}>
+          <div className="exp-panel-header">
+            <ShieldAlert size={15} />
+            <span>Exp 3 · Cross-Dataset Generalization &amp; Social-Media Compression Stress</span>
+          </div>
+          <div className="exp-plots-grid">
+            <div className="exp-plot-card">
+              <div className="exp-plot-title">Compression &amp; Noise Degradation Curves (H.264 / JPEG / SNR)</div>
+              <img src="/api/v2/plots/exp3_compression_curves.png" alt="Exp 3 compression robustness curves" className="exp-plot-img" />
+            </div>
+            <div className="exp-plot-card">
+              <div className="exp-plot-title">Audio In-Domain vs Out-of-Domain Generalization</div>
+              <img src="/api/v2/plots/exp3_audio_cross_dataset.png" alt="Exp 3 audio cross-dataset chart" className="exp-plot-img" />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

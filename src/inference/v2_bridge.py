@@ -187,9 +187,23 @@ def run_v2_multi_verification(
         t_words = set(str(cross["transcript"]).lower().split())
         audio_text_sim = round(len(c_words & t_words) / max(len(c_words | t_words), 1), 3)
 
-    # Estimate AV-correspondence consistency when both visual & audio scores exist
+    # Compute real Voice-Video Lip-Sync / AV correspondence using Laptop 2's AVSyncDetector when available
     av_sync_est: Optional[float] = None
-    if v_score is not None and a_score is not None:
+    av_sync_reason: Optional[str] = None
+    av_contradiction = False
+    if modality == "video" and media_path is not None and media_path.exists():
+        try:
+            from src.models.av_sync import compute_av_sync_score
+
+            av_res = compute_av_sync_score(str(media_path), sample_fps=8.0, contradiction_threshold=0.40)
+            if av_res.av_sync_score is not None:
+                av_sync_est = round(float(av_res.av_sync_score), 3)
+                av_contradiction = bool(av_res.is_av_contradiction)
+                av_sync_reason = av_res.reason
+        except Exception as exc:
+            logger.debug(f"AVSyncDetector fallback: {exc}")
+
+    if av_sync_est is None and v_score is not None and a_score is not None:
         av_sync_est = round(float(1.0 - abs(v_score - a_score) * 0.7 - max(v_score, a_score) * 0.3), 3)
         av_sync_est = max(0.0, min(1.0, av_sync_est))
 
@@ -198,8 +212,9 @@ def run_v2_multi_verification(
         visual_text_est = round(float(1.0 - 0.5 * v_score), 3)
 
     is_contradiction = bool(
-        (audio_text_sim is not None and audio_text_sim < 0.40)
-        or (av_sync_est is not None and av_sync_est < 0.45)
+        av_contradiction
+        or (audio_text_sim is not None and audio_text_sim < 0.40)
+        or (av_sync_est is not None and av_sync_est < 0.40)
         or bool(base_result.get("disagreement"))
     )
 

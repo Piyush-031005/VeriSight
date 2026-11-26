@@ -1216,6 +1216,33 @@ details.signal-row blockquote mark { background: var(--cream); border-radius: 2p
   line-height: 1.5;
 }
 
+.exp-plots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 18px;
+}
+
+.exp-plot-card {
+  background: var(--cream-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.exp-plot-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-2);
+  margin-bottom: 10px;
+}
+
+.exp-plot-img {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  display: block;
+}
+
 ::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }

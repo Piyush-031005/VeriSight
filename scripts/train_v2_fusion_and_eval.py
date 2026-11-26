@@ -97,16 +97,29 @@ def load_or_align_embeddings(cache_dir: Path, emb_dim: int = 256):
                     t_paired[i] = t_fake[i % len(t_fake)] if len(t_fake) else t_all[i % len(t_all)]
                 av_sync[i] = float(np.clip(rng.normal(0.46, 0.19), 0.05, 0.92))
 
-            if a_npz is not None and f"{split}_embeddings" in a_npz:
-                a_all = a_npz[f"{split}_embeddings"]
-                a_lbl = a_npz[f"{split}_labels"]
-                if y == 0:
-                    a_pool = a_all[a_lbl == 0]
+            if a_npz is not None:
+                if f"{split}_embeddings" in a_npz:
+                    a_all = a_npz[f"{split}_embeddings"].astype(np.float32)
+                    a_lbl = a_npz[f"{split}_labels"]
+                elif "embeddings" in a_npz and "splits" in a_npz:
+                    # Laptop 2 schema: embeddings=(5000,256) float16, splits in {'dev','eval'}
+                    target_split = "eval" if split == "test" else "dev"
+                    sel = a_npz["splits"] == target_split
+                    a_all = a_npz["embeddings"][sel].astype(np.float32)
+                    a_lbl = a_npz["labels"][sel]
                 else:
-                    # Half have fake audio, half have real audio (only visual is fake)
-                    target_a = 1 if rng.rand() < 0.6 else 0
-                    a_pool = a_all[a_lbl == target_a]
-                a_paired[i] = a_pool[i % len(a_pool)] if len(a_pool) else a_all[i % len(a_all)]
+                    a_all, a_lbl = None, None
+
+                if a_all is not None and len(a_all) > 0:
+                    if y == 0:
+                        a_pool = a_all[a_lbl == 0]
+                    else:
+                        # Realistic AV deepfake mix: 60% audio fake + 40% real audio (visual-only fake)
+                        target_a = 1 if rng.rand() < 0.6 else 0
+                        a_pool = a_all[a_lbl == target_a]
+                    a_paired[i] = a_pool[i % len(a_pool)] if len(a_pool) else a_all[i % len(a_all)]
+                else:
+                    mask[i, 1] = 0.0
             else:
                 mask[i, 1] = 0.0  # audio absent
 

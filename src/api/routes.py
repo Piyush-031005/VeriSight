@@ -357,3 +357,15 @@ async def get_demo_sample(filename: str):
     if not str(target).startswith(str(demo_dir)) or not target.is_file():
         raise HTTPException(status_code=404, detail="Demo sample not found.")
     return FileResponse(target, filename=safe_name)
+
+
+@router.get("/v2/plots/{filename}")
+async def get_v2_plot(filename: str):
+    """Serve generated Experiment 3 plots from results/plots/."""
+    root = Path(__file__).resolve().parent.parent.parent
+    plots_dir = (root / "results" / "plots").resolve()
+    safe_name = Path(filename).name
+    target = (plots_dir / safe_name).resolve()
+    if not str(target).startswith(str(plots_dir)) or not target.is_file():
+        raise HTTPException(status_code=404, detail="Plot not found.")
+    return FileResponse(target, filename=safe_name)
