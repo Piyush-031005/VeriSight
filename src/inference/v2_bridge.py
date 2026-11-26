@@ -194,9 +194,20 @@ def run_v2_multi_verification(
         if v2_txt is not None:
             prob_fake, token_attributions = v2_txt
             txt_block = base_result.setdefault("text", {})
+            en_base_score = txt_block.get("score")
+            if en_base_score is not None:
+                en_s = float(en_base_score)
+                # Dual English consensus: if either dedicated English AI-text or multilingual XLM-R strongly sees natural human style (<0.15)
+                # and the other isn't >0.85 confident AI, protect informal/typo human text from headline-artifact false positives.
+                if min(prob_fake, en_s) < 0.15 and max(prob_fake, en_s) < 0.85:
+                    prob_fake = 0.75 * min(prob_fake, en_s) + 0.25 * max(prob_fake, en_s)
+                else:
+                    prob_fake = 0.60 * prob_fake + 0.40 * en_s
+                txt_block["model"] = "XLM-RoBERTa + RoBERTa Dual-Detector (EN)"
+            else:
+                txt_block["model"] = "xlm-roberta-base (VeriSight · EN/HI/Hinglish)"
             txt_block["score"] = round(prob_fake, 4)
             txt_block["available"] = True
-            txt_block["model"] = "xlm-roberta-base (VeriSight · EN/HI/Hinglish)"
             txt_block["label"] = "Multilingual AI-writing & claim check"
             txt_block["reason"] = None
             band = txt_block.get("band") or [0.40, 0.60]
