@@ -394,16 +394,20 @@ def run_jpeg_stress(
 
 
 def run_av_sync_conflict_test(video_dir: Path, max_pairs: int = 30) -> Dict:
-    """Test AV-sync score on aligned vs artificially swapped-audio pairs."""
+    """Test AV-sync score on aligned real clips vs artificially swapped-audio pairs."""
     from src.models.av_sync import compute_av_sync_score
-    videos = [f for f in sorted(video_dir.rglob("*")) if f.suffix.lower() in VIDEO_EXTS][: max_pairs * 2]
+    real_subdir = video_dir / "real"
+    search_root = real_subdir if real_subdir.exists() else video_dir
+    videos = [f for f in sorted(search_root.rglob("*")) if f.suffix.lower() in VIDEO_EXTS][:max_pairs]
+    if len(videos) < 2:
+        videos = [f for f in sorted(video_dir.rglob("*")) if f.suffix.lower() in VIDEO_EXTS][: max_pairs * 2]
     if len(videos) < 2:
         return {"skipped": "Need at least 2 video files for AV swap test."}
 
     aligned_scores, swapped_scores = [], []
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
-        pairs = list(zip(videos[:max_pairs], videos[1: max_pairs + 1]))
+        pairs = [(videos[i], videos[(i + 1) % len(videos)]) for i in range(min(max_pairs, len(videos)))]
         for i, (vid_a, vid_b) in enumerate(pairs):
             res_aligned = compute_av_sync_score(vid_a)
             if res_aligned.av_sync_score is not None:

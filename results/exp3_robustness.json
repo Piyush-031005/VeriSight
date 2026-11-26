@@ -1,0 +1,89 @@
+{
+  "config": "configs/v2_cuda.yaml",
+  "checkpoint": "checkpoints\\v2_audio_xlsr_head.pt",
+  "device": "cuda",
+  "audio_noise_stress": {
+    "snr_20dB": {
+      "n_files": 600,
+      "acc": 0.7517,
+      "f1": 0.7732,
+      "auc": 0.8528
+    },
+    "snr_10dB": {
+      "n_files": 600,
+      "acc": 0.78,
+      "f1": 0.7708,
+      "auc": 0.8602
+    },
+    "snr_5dB": {
+      "n_files": 600,
+      "acc": 0.755,
+      "f1": 0.7721,
+      "auc": 0.8437
+    }
+  },
+  "h264_compression": {
+    "crf_23": {
+      "n_files": 40,
+      "acc": 0.75,
+      "f1": 0.7826,
+      "auc": 0.8075,
+      "mean_av_sync": 0.5126
+    },
+    "crf_32": {
+      "n_files": 40,
+      "acc": 0.75,
+      "f1": 0.7826,
+      "auc": 0.8075,
+      "mean_av_sync": 0.534
+    },
+    "crf_40": {
+      "n_files": 40,
+      "acc": 0.75,
+      "f1": 0.7826,
+      "auc": 0.8075,
+      "mean_av_sync": 0.5194
+    }
+  },
+  "jpeg_compression": {
+    "jpeg_q90": {
+      "n_clips": 30,
+      "mean_av_sync": 0.446,
+      "mean_face_frames": 62.0
+    },
+    "jpeg_q60": {
+      "n_clips": 30,
+      "mean_av_sync": 0.4645,
+      "mean_face_frames": 62.03
+    },
+    "jpeg_q30": {
+      "n_clips": 30,
+      "mean_av_sync": 0.4553,
+      "mean_face_frames": 62.23
+    }
+  },
+  "cross_dataset": {
+    "indomain_ASVspoof_eval": {
+      "n_files": 600,
+      "acc": 0.9733,
+      "f1": 0.9731,
+      "auc": 0.9972
+    },
+    "ood_WaveFake_or_DeepfakeEval": {
+      "n_files": 600,
+      "acc": 0.5317,
+      "f1": 0.6258,
+      "auc": 0.5747
+    }
+  },
+  "av_sync_contradiction": {
+    "n_aligned_pairs": 20,
+    "n_swapped_pairs": 20,
+    "aligned_mean_score": 0.5302,
+    "aligned_std": 0.0757,
+    "swapped_mean_score": 0.4621,
+    "swapped_std": 0.0899,
+    "contradiction_detection_rate": 0.15
+  },
+  "total_time_seconds": 1005.0
+}

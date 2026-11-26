@@ -1,0 +1,23 @@
+{
+  "in_domain": {
+    "dataset": "ASVspoof2019_LA_eval",
+    "backbone": "facebook/wav2vec2-xls-r-300m",
+    "best_epoch": 9,
+    "best_dev_auc": 0.9989,
+    "training_time_seconds": 3226.2,
+    "peak_vram_gb": 3.146,
+    "checkpoint_size_mb": 1.26,
+    "n_samples": 71237,
+    "loss": 0.0149,
+    "acc": 0.9685,
+    "f1": 0.9821,
+    "auc": 0.9975
+  },
+  "out_of_domain": {
+    "n_samples": 600,
+    "loss": 1.4522,
+    "acc": 0.5283,
+    "f1": 0.6222,
+    "auc": 0.5757
+  }
+}
