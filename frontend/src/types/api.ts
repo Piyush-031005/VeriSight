@@ -104,6 +104,21 @@ export interface PredictResponse {
   text?: TextEvidence;
   cross_modal?: CrossModalTextEvidence;
   disagreement?: string | null;
+  v2_multi_verify?: {
+    gradcam_overlay_b64?: string | null;
+    consistency_scores?: {
+      visual_text?: number | null;
+      audio_text?: number | null;
+      av_sync?: number | null;
+      is_contradiction?: boolean;
+    };
+    uncertainty?: {
+      entropy?: number | null;
+      verdict_note?: string | null;
+    };
+    grounded_summary?: string | null;
+    v2_enrichment_sec?: number;
+  } | null;
 }
 
 export interface HealthResponse {

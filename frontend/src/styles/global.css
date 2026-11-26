@@ -1201,3 +1201,78 @@ details.signal-row blockquote mark {
 
 /* Drag-over state override */
 .source-monitor.drag-over { border-color: var(--accent); }
+
+/* ===================================================================
+   VERISIGHT v2 MULTI-VERIFICATION & GRAD-CAM CARDS
+   =================================================================== */
+.v2-verify-card,
+.v2-gradcam-card,
+.v2-grounded-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.v2-verify-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+  letter-spacing: 0.03em;
+}
+
+.v2-badge-contradiction {
+  background: var(--fake-bg);
+  color: var(--fake);
+  border: 1px solid #FECACA;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 12px;
+  text-transform: uppercase;
+}
+
+.v2-consistency-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.v2-metric-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.v2-metric-label {
+  font-size: 10px;
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+.v2-metric-val {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.v2-gradcam-img {
+  width: 100%;
+  max-width: 220px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  margin-top: 8px;
+  display: block;
+}

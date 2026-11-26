@@ -233,8 +233,12 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
   }
 
   // ── State 4: Completed Result ──────────────────────────────────────
-  const { video, audio, timing, warnings, image, text, cross_modal, disagreement } = result;
+  const { video, audio, timing, warnings, image, text, cross_modal, disagreement, v2_multi_verify } = result;
   const filteredWarnings = (warnings || []).filter((w) => !w.startsWith('[UNVALIDATED]'));
+  const consistency = v2_multi_verify?.consistency_scores;
+  const hasConsistency =
+    consistency &&
+    (consistency.visual_text != null || consistency.audio_text != null || consistency.av_sync != null);
 
   return (
     <div className="findings">
@@ -469,6 +473,75 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
           <p className="evidence-note">Uncalibrated fusion score {result.fusion.score.toFixed(4)}</p>
         )}
       </div>
+
+      {/* 2B. VeriSight v2 Multi-Verification & Explainability */}
+      {(hasConsistency || v2_multi_verify?.gradcam_overlay_b64 || v2_multi_verify?.grounded_summary) && (
+        <>
+          <hr className="findings-rule" />
+          <div className="findings-section-label">Multi-Verification &amp; Explainability (v2)</div>
+
+          {hasConsistency && (
+            <div className="v2-verify-card">
+              <div className="v2-verify-header">
+                <span>Layer 2 · Cross-Modal Double Check</span>
+                {consistency?.is_contradiction && (
+                  <span className="v2-badge-contradiction">Contradiction Detected</span>
+                )}
+              </div>
+              <div className="v2-consistency-grid">
+                {consistency?.av_sync != null && (
+                  <div className="v2-metric-box">
+                    <span className="v2-metric-label">Voice ↔ Video Sync</span>
+                    <span className="v2-metric-val">{(consistency.av_sync * 100).toFixed(0)}%</span>
+                  </div>
+                )}
+                {consistency?.audio_text != null && (
+                  <div className="v2-metric-box">
+                    <span className="v2-metric-label">Voice ↔ Caption</span>
+                    <span className="v2-metric-val">{(consistency.audio_text * 100).toFixed(0)}%</span>
+                  </div>
+                )}
+                {consistency?.visual_text != null && (
+                  <div className="v2-metric-box">
+                    <span className="v2-metric-label">Visual ↔ Caption</span>
+                    <span className="v2-metric-val">{(consistency.visual_text * 100).toFixed(0)}%</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {v2_multi_verify?.gradcam_overlay_b64 && (
+            <div className="v2-gradcam-card">
+              <div className="v2-verify-header">
+                <span>Visual Grad-CAM Saliency Map</span>
+                <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>224×224 overlay</span>
+              </div>
+              <img
+                src={v2_multi_verify.gradcam_overlay_b64}
+                alt="Grad-CAM facial manipulation heatmap"
+                className="v2-gradcam-img"
+              />
+            </div>
+          )}
+
+          {v2_multi_verify?.grounded_summary && (
+            <div className="v2-grounded-box">
+              <div className="v2-verify-header">
+                <span>Evidence-Grounded Summary</span>
+                {v2_multi_verify.uncertainty?.entropy != null && (
+                  <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>
+                    H = {v2_multi_verify.uncertainty.entropy.toFixed(3)}
+                  </span>
+                )}
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.55, marginTop: 4 }}>
+                {v2_multi_verify.grounded_summary}
+              </p>
+            </div>
+          )}
+        </>
+      )}
 
       <hr className="findings-rule" />
 
