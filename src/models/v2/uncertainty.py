@@ -17,7 +17,7 @@ class TemperatureScaler(nn.Module):
 
     @property
     def temperature(self) -> torch.Tensor:
-        return torch.exp(self.log_temp).clamp(min=0.05, max=20.0)
+        return torch.exp(self.log_temp).clamp(min=0.5, max=5.0)
 
     def forward(self, logits: torch.Tensor) -> torch.Tensor:
         return logits / self.temperature

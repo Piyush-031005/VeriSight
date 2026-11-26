@@ -136,6 +136,36 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
 
   const openFilePicker = () => fileInputRef.current?.click();
 
+  const loadDemoPreset = async (filename: string) => {
+    onFileError(null);
+    try {
+      const res = await fetch(`/api/demo-samples/${encodeURIComponent(filename)}`);
+      if (!res.ok) throw new Error('Demo sample unavailable (ensure backend is running).');
+      const blob = await res.blob();
+      const f = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+      onFileSelect(f);
+    } catch (err: any) {
+      onFileError(err?.message || 'Could not load demo sample.');
+    }
+  };
+
+  const DEMO_PRESETS: Record<string, { label: string; file: string }[]> = {
+    video: [
+      { label: 'Face-Swap + Audio', file: 'test_video_faceswap_with_audio.mp4' },
+      { label: 'Authentic Video', file: 'test_video_realface_with_audio.mp4' },
+      { label: 'Silent Video', file: 'test_silent_video.mp4' },
+    ],
+    audio: [
+      { label: 'Synthetic Speech', file: 'test_speech_synthesis.wav' },
+      { label: 'Silence Sample', file: 'test_silence.wav' },
+    ],
+    image: [
+      { label: 'Fake Face Crop', file: 'test_face_fake.jpg' },
+      { label: 'Real Face Crop', file: 'test_face_real.jpg' },
+      { label: 'AI Synthetic', file: 'test_synthetic.jpg' },
+    ],
+  };
+
   const getMonitorLabel = () => {
     switch (modality) {
       case 'audio': return 'ACOUSTIC MONITOR';
@@ -202,9 +232,36 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
               className="monitor-textarea"
               value={textContent}
               onChange={(e) => onTextChange(e.target.value)}
-              placeholder="Paste or type article text, transcription, or statement to evaluate for synthetic writing patterns…"
+              placeholder="Paste or type English, Hindi, or Hinglish text/caption to evaluate for synthetic writing patterns…"
               aria-label="Text to inspect"
             />
+            {textContent.trim().length === 0 && (
+              <div className="monitor-presets" style={{ justifyContent: 'flex-start', marginTop: 8 }}>
+                <span className="monitor-presets-label">Sample:</span>
+                <button
+                  type="button"
+                  className="monitor-preset-pill"
+                  onClick={() =>
+                    onTextChange(
+                      'Artificial intelligence systems rely heavily on large-scale statistical optimization across transformer layers, enabling coherent multi-paragraph synthesis across diverse technical domains.'
+                    )
+                  }
+                >
+                  AI-style EN
+                </button>
+                <button
+                  type="button"
+                  className="monitor-preset-pill"
+                  onClick={() =>
+                    onTextChange(
+                      'Breaking news: RBI ne kal raat 12 baje se sabhi digital UPI payments par 15% tax lagane ki ghoshna ki hai, abhi sabko forward karein.'
+                    )
+                  }
+                >
+                  Hinglish Claim
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -223,6 +280,21 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
             <button className="monitor-choose-btn" onClick={openFilePicker} type="button">
               Choose file
             </button>
+            {DEMO_PRESETS[modality] && (
+              <div className="monitor-presets">
+                <span className="monitor-presets-label">Quick demo:</span>
+                {DEMO_PRESETS[modality].map((preset) => (
+                  <button
+                    key={preset.file}
+                    type="button"
+                    className="monitor-preset-pill"
+                    onClick={() => loadDemoPreset(preset.file)}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

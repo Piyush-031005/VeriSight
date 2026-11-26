@@ -1,39 +1,43 @@
 import React, { useEffect, useState } from 'react';
-import { Film, Music, Image as ImageIcon, FileText, Shield } from 'lucide-react';
+import { Film, Music, Image as ImageIcon, FileText, Shield, BarChart2, ScanSearch } from 'lucide-react';
 import { SourceMonitor } from './components/SourceMonitor';
 import { FindingsSheet } from './components/FindingsSheet';
+import { ExperimentsDashboard } from './components/ExperimentsDashboard';
 import { usePredict } from './hooks/usePredict';
 import { HealthResponse, ModalityType, ImageCheckType } from './types/api';
 import './styles/global.css';
 
+type ActiveView = 'inspector' | 'benchmarks';
+
 const HEADINGS: Record<ModalityType, { eyebrow: string; title: string; subtitle: string }> = {
   video: {
-    eyebrow: 'Video Analysis',
+    eyebrow: 'Multimodal Video Verification',
     title: 'Inspect video recording',
     subtitle:
-      'Sample 8 frames for face-swap manipulation, analyse the audio soundtrack, and evaluate cross-modal consistency signals.',
+      'Runs 3-Layer Multi-Verification: Visual face-swap + Grad-CAM saliency, acoustic speech analysis, and cross-modal consistency checks.',
   },
   audio: {
-    eyebrow: 'Audio Analysis',
+    eyebrow: 'Acoustic Forensics',
     title: 'Inspect acoustic recording',
     subtitle:
-      'Evaluate raw waveforms for synthetic speech markers using wav2vec2-large-xlsr deepfake classification.',
+      'Evaluate 16 kHz speech waveforms for synthetic TTS or voice cloning markers and compare against optional captions.',
   },
   image: {
-    eyebrow: 'Image Analysis',
+    eyebrow: 'Photographic Forensics',
     title: 'Inspect photographic media',
     subtitle:
-      'Detect face-swap tampering via deepfakeguard-v2 or general AI-generated imagery via sdxl-detector.',
+      'Detect face-swap tampering (deepfakeguard-v2 + Grad-CAM) or diffusion/AI synthesis (sdxl-detector).',
   },
   text: {
-    eyebrow: 'Text Analysis',
+    eyebrow: 'Multilingual Linguistic Check',
     title: 'Inspect textual content',
     subtitle:
-      'Evaluate writing style with RoBERTa-based AI-text detection to estimate synthetic authorship probability.',
+      'Evaluate English, Hindi, or Hinglish passages for AI-generated writing style and misleading claims.',
   },
 };
 
 export const App: React.FC = () => {
+  const [activeView, setActiveView] = useState<ActiveView>('inspector');
   const [modality, setModality] = useState<ModalityType>('video');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [textContent, setTextContent] = useState<string>('');
@@ -90,7 +94,30 @@ export const App: React.FC = () => {
           <span className="topbar-wordmark">
             Veri<span>Sight</span>
           </span>
-          <span className="topbar-tagline">Multimodal Deepfake Detection</span>
+          <span className="topbar-tagline">Multimodal Verification · v2</span>
+
+          <div className="topbar-nav-switch" role="tablist" aria-label="Workspace view">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === 'inspector'}
+              className={`topbar-nav-btn${activeView === 'inspector' ? ' topbar-nav-btn--active' : ''}`}
+              onClick={() => setActiveView('inspector')}
+            >
+              <ScanSearch size={13} />
+              <span>Inspector</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeView === 'benchmarks'}
+              className={`topbar-nav-btn${activeView === 'benchmarks' ? ' topbar-nav-btn--active' : ''}`}
+              onClick={() => setActiveView('benchmarks')}
+            >
+              <BarChart2 size={13} />
+              <span>Benchmarks &amp; Exp</span>
+            </button>
+          </div>
         </div>
 
         <div className="topbar-right">
@@ -132,76 +159,103 @@ export const App: React.FC = () => {
             </span>
           </div>
           <div className="system-detail-item">
-            <span className="system-detail-label">Visual Model</span>
-            <span className="system-detail-value">Samson5827/deepfakeguard-v2</span>
+            <span className="system-detail-label">Visual v2</span>
+            <span className="system-detail-value">CLIP ViT-B/32 + EffNet-B0 + Grad-CAM</span>
           </div>
           <div className="system-detail-item">
-            <span className="system-detail-label">Audio Model</span>
+            <span className="system-detail-label">Audio</span>
             <span className="system-detail-value">
-              {health?.audio_model?.model_name ?? 'pranjal-pravesh/wav2vec2-large-xlsr'}
+              {health?.audio_model?.model_name ?? 'wav2vec2 XLS-R'}
             </span>
           </div>
           <div className="system-detail-item">
-            <span className="system-detail-label">Text Model</span>
-            <span className="system-detail-value">fakespot-ai/roberta-base-ai-text-detection-v1</span>
+            <span className="system-detail-label">Text v2</span>
+            <span className="system-detail-value">XLM-RoBERTa (EN / HI / Hinglish)</span>
           </div>
         </div>
       )}
 
-      {/* ── Workspace Heading ───────────────────────────────── */}
-      <div className="workspace-heading">
-        <div className="workspace-eyebrow">{activeHeading.eyebrow}</div>
-        <h1 className="workspace-title">{activeHeading.title}</h1>
-        <p className="workspace-subtitle">{activeHeading.subtitle}</p>
+      {activeView === 'benchmarks' ? (
+        <ExperimentsDashboard />
+      ) : (
+        <>
+          {/* ── Workspace Heading + 3-Layer Pipeline Strip ──── */}
+          <div className="workspace-heading">
+            <div className="workspace-heading-row">
+              <div>
+                <div className="workspace-eyebrow">{activeHeading.eyebrow}</div>
+                <h1 className="workspace-title">{activeHeading.title}</h1>
+                <p className="workspace-subtitle">{activeHeading.subtitle}</p>
+              </div>
 
-        {/* Modality Tabs */}
-        <nav className="modality-nav" aria-label="Inspection modality">
-          {(
-            [
-              { key: 'video' as ModalityType, Icon: Film,      label: 'Video' },
-              { key: 'audio' as ModalityType, Icon: Music,     label: 'Audio' },
-              { key: 'image' as ModalityType, Icon: ImageIcon, label: 'Image' },
-              { key: 'text'  as ModalityType, Icon: FileText,  label: 'Text'  },
-            ] as const
-          ).map(({ key, Icon, label }) => (
-            <button
-              key={key}
-              type="button"
-              className={`modality-tab${modality === key ? ' modality-tab--active' : ''}`}
-              onClick={() => handleModalityChange(key)}
-            >
-              <Icon size={14} strokeWidth={2} />
-              <span>{label}</span>
-            </button>
-          ))}
-        </nav>
-      </div>
+              <div className="pipeline-stepper" aria-label="3-Layer Verification Pipeline">
+                <div className={`pipeline-step${result || isLoading ? ' pipeline-step--active' : ''}`}>
+                  <span className="pipeline-step-num">1</span>
+                  <span>Unimodal Forensics</span>
+                </div>
+                <span className="pipeline-step-arrow">→</span>
+                <div className={`pipeline-step${result?.v2_multi_verify ? ' pipeline-step--active' : ''}`}>
+                  <span className="pipeline-step-num">2</span>
+                  <span>Cross-Modal Check</span>
+                </div>
+                <span className="pipeline-step-arrow">→</span>
+                <div className={`pipeline-step${result ? ' pipeline-step--done' : ''}`}>
+                  <span className="pipeline-step-num">3</span>
+                  <span>Calibrated Verdict</span>
+                </div>
+              </div>
+            </div>
 
-      {/* ── Main Two-Column Workspace ───────────────────────── */}
-      <main className="workspace">
-        <SourceMonitor
-          modality={modality}
-          file={selectedFile}
-          onFileSelect={handleFileSelect}
-          textContent={textContent}
-          onTextChange={handleTextChange}
-          fileError={fileError}
-          onFileError={setFileError}
-          imageCheckType={imageCheckType}
-          onImageCheckTypeChange={setImageCheckType}
-        />
+            {/* Modality Tabs */}
+            <nav className="modality-nav" aria-label="Inspection modality">
+              {(
+                [
+                  { key: 'video' as ModalityType, Icon: Film,      label: 'Video + Audio' },
+                  { key: 'audio' as ModalityType, Icon: Music,     label: 'Audio' },
+                  { key: 'image' as ModalityType, Icon: ImageIcon, label: 'Image' },
+                  { key: 'text'  as ModalityType, Icon: FileText,  label: 'Text (EN / HI)' },
+                ] as const
+              ).map(({ key, Icon, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`modality-tab${modality === key ? ' modality-tab--active' : ''}`}
+                  onClick={() => handleModalityChange(key)}
+                >
+                  <Icon size={14} strokeWidth={2} />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </nav>
+          </div>
 
-        <FindingsSheet
-          modality={modality}
-          file={selectedFile}
-          textContent={textContent}
-          result={result}
-          isLoading={isLoading}
-          error={error}
-          onAnalyze={handleAnalyze}
-          imageCheckType={imageCheckType}
-        />
-      </main>
+          {/* ── Main Two-Column Workspace ───────────────────── */}
+          <main className="workspace">
+            <SourceMonitor
+              modality={modality}
+              file={selectedFile}
+              onFileSelect={handleFileSelect}
+              textContent={textContent}
+              onTextChange={handleTextChange}
+              fileError={fileError}
+              onFileError={setFileError}
+              imageCheckType={imageCheckType}
+              onImageCheckTypeChange={setImageCheckType}
+            />
+
+            <FindingsSheet
+              modality={modality}
+              file={selectedFile}
+              textContent={textContent}
+              result={result}
+              isLoading={isLoading}
+              error={error}
+              onAnalyze={handleAnalyze}
+              imageCheckType={imageCheckType}
+            />
+          </main>
+        </>
+      )}
     </div>
   );
 };

@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional, Literal
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 
 from src.api.schemas import HealthResponse, PredictResponse, TextPredictRequest
 from src.data.audio_preprocessing import is_ffmpeg_available
@@ -305,3 +306,54 @@ async def predict_video_text(
     """Analyze a video file containing on-screen text, burnt-in captions, or subtitles."""
     # Delegate to predict_video which natively accepts video + optional subtitles/text
     return await predict_video(request=request, file=file, text=text, subtitles=subtitles, strict=False, strategy=strategy)
+
+
+@router.get("/v2/metrics")
+async def get_v2_metrics():
+    """Return real VeriSight v2 training/experiment JSON metrics & checkpoint status."""
+    import json
+
+    root = Path(__file__).resolve().parent.parent.parent
+    results_dir = root / "results"
+    ckpt_dir = root / "checkpoints"
+
+    def _read_json(p: Path):
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+        return None
+
+    checkpoints = {}
+    for name in (
+        "v2_visual_head.pt",
+        "v2_text_head.pt",
+        "v2_audio_xlsr_head.pt",
+        "v2_fusion_consistency_gated.pt",
+    ):
+        cp = ckpt_dir / name
+        checkpoints[name] = {
+            "exists": cp.exists(),
+            "size_mb": round(cp.stat().st_size / (1024 * 1024), 2) if cp.exists() else 0.0,
+        }
+
+    return {
+        "experiments_summary": _read_json(results_dir / "v2_experiments_summary.json"),
+        "text_eval": _read_json(results_dir / "text_eval_l1.json"),
+        "audio_eval_l2": _read_json(results_dir / "audio_eval_l2.json"),
+        "exp3_robustness": _read_json(results_dir / "exp3_robustness.json"),
+        "checkpoints": checkpoints,
+    }
+
+
+@router.get("/demo-samples/{filename}")
+async def get_demo_sample(filename: str):
+    """Serve safe allowlisted files from demo_samples/ for one-click UI testing."""
+    root = Path(__file__).resolve().parent.parent.parent
+    demo_dir = (root / "demo_samples").resolve()
+    safe_name = Path(filename).name
+    target = (demo_dir / safe_name).resolve()
+    if not str(target).startswith(str(demo_dir)) or not target.is_file():
+        raise HTTPException(status_code=404, detail="Demo sample not found.")
+    return FileResponse(target, filename=safe_name)

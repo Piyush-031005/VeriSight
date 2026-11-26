@@ -86,16 +86,26 @@ def load_or_align_embeddings(cache_dir: Path, emb_dim: int = 256):
         for i, y in enumerate(v_lbl):
             if y == 0:
                 t_paired[i] = t_real[i % len(t_real)] if len(t_real) else t_all[i % len(t_all)]
-                av_sync[i] = rng.uniform(0.70, 0.95)
+                # Realistic noisy AV-sync distribution with natural overlap
+                av_sync[i] = float(np.clip(rng.normal(0.72, 0.16), 0.10, 0.98))
             else:
-                # Mix visual fake + text/conflict fake
-                t_paired[i] = t_fake[i % len(t_fake)] if len(t_fake) else t_all[i % len(t_all)]
-                av_sync[i] = rng.uniform(0.15, 0.50)
+                # Realistic multimodal deepfake scenarios:
+                # 65% aligned fake, 35% single-modality / conflicting fake (e.g. fake video + real caption)
+                if rng.rand() < 0.35:
+                    t_paired[i] = t_real[i % len(t_real)] if len(t_real) else t_all[i % len(t_all)]
+                else:
+                    t_paired[i] = t_fake[i % len(t_fake)] if len(t_fake) else t_all[i % len(t_all)]
+                av_sync[i] = float(np.clip(rng.normal(0.46, 0.19), 0.05, 0.92))
 
             if a_npz is not None and f"{split}_embeddings" in a_npz:
                 a_all = a_npz[f"{split}_embeddings"]
                 a_lbl = a_npz[f"{split}_labels"]
-                a_pool = a_all[a_lbl == y]
+                if y == 0:
+                    a_pool = a_all[a_lbl == 0]
+                else:
+                    # Half have fake audio, half have real audio (only visual is fake)
+                    target_a = 1 if rng.rand() < 0.6 else 0
+                    a_pool = a_all[a_lbl == target_a]
                 a_paired[i] = a_pool[i % len(a_pool)] if len(a_pool) else a_all[i % len(a_all)]
             else:
                 mask[i, 1] = 0.0  # audio absent
