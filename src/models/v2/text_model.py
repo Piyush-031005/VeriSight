@@ -39,7 +39,10 @@ class TextV2Detector(nn.Module):
             try:
                 from transformers import AutoModel
 
-                self.backbone = AutoModel.from_pretrained(backbone_name)
+                try:
+                    self.backbone = AutoModel.from_pretrained(backbone_name, local_files_only=True)
+                except Exception:
+                    self.backbone = AutoModel.from_pretrained(backbone_name)
                 hidden_dim = self.backbone.config.hidden_size
                 if freeze_backbone:
                     for p in self.backbone.parameters():

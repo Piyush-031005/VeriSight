@@ -171,7 +171,7 @@ export const ExperimentsDashboard: React.FC = () => {
                 <div className="signal-bar-track">
                   <div
                     className="signal-bar-fill signal-bar-fill--real"
-                    style={{ width: `${Math.min(100, val.f1 * 100)}%`, background: 'var(--accent)' }}
+                    style={{ width: `${Math.min(100, val.f1 * 100)}%`, background: 'var(--green)' }}
                   />
                 </div>
               </div>

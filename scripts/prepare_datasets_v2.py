@@ -88,37 +88,43 @@ def prepare_video_splits(seed: int = 42):
 
 def prepare_text_splits(seed: int = 42):
     rows = []
-    # 1. HC3 all.jsonl
+    # 1. HC3 all.jsonl (0 = human, 1 = chatgpt/AI)
     hc3_all = DATASET_DIR / "hc3_english" / "all.jsonl"
     if hc3_all.exists():
         with open(hc3_all, "r", encoding="utf-8") as f:
             for i, line in enumerate(f):
-                if i >= 2500:
+                if i >= 3500:
                     break
                 obj = json.loads(line)
                 for ans in obj.get("human_answers", [])[:1]:
-                    if len(ans.strip()) >= 50:
-                        rows.append({"text": ans.strip(), "label": 0, "language": "en", "source": "hc3"})
+                    t = ans.strip()
+                    if len(t) >= 40:
+                        rows.append({"text": t, "label": 0, "language": "en", "source": "hc3_human"})
                 for ans in obj.get("chatgpt_answers", [])[:1]:
-                    if len(ans.strip()) >= 50:
-                        rows.append({"text": ans.strip(), "label": 1, "language": "en", "source": "hc3"})
+                    t = ans.strip()
+                    if len(t) >= 40:
+                        rows.append({"text": t, "label": 1, "language": "en", "source": "hc3_ai"})
 
-    # 2. Fakeddit (all_validate.tsv + sample of all_train.tsv)
-    for fn, cap in [("all_validate.tsv", 1500), ("all_train.tsv", 1500)]:
+    # 2. Fakeddit text-centric subreddits ONLY, with corrected label polarity:
+    # NOTE: In Fakeddit 2_way_label, 1 = REAL/TRUE and 0 = FAKE!
+    # Our codebase uses 0 = REAL and 1 = FAKE, so we flip: label = 1 - int(2_way_label).
+    text_subreddits = {"nottheonion", "theonion", "satire", "savedyouaclick", "usanews", "worldnews"}
+    for fn, cap in [("all_validate.tsv", 10000), ("all_train.tsv", 10000)]:
         tsv = DATASET_DIR / fn
         if tsv.exists():
             fdf = pd.read_csv(tsv, sep="\t", nrows=cap)
-            if "clean_title" in fdf.columns and "2_way_label" in fdf.columns:
-                for _, r in fdf.dropna(subset=["clean_title", "2_way_label"]).iterrows():
+            if {"clean_title", "2_way_label", "subreddit"}.issubset(fdf.columns):
+                sub_df = fdf[fdf["subreddit"].astype(str).str.lower().isin(text_subreddits)]
+                for _, r in sub_df.dropna(subset=["clean_title", "2_way_label"]).iterrows():
                     t = str(r["clean_title"]).strip()
-                    if len(t) >= 20:
-                        rows.append({"text": t, "label": int(r["2_way_label"]), "language": "en", "source": "fakeddit"})
+                    if len(t) >= 25:
+                        rows.append({"text": t, "label": 1 - int(r["2_way_label"]), "language": "en", "source": "fakeddit"})
 
     df = pd.DataFrame(rows).sample(frac=1.0, random_state=seed).reset_index(drop=True)
     n_tr = int(len(df) * 0.85)
     df.iloc[:n_tr].to_csv(DATA_DIR / "text_v2_train.csv", index=False)
     df.iloc[n_tr:].to_csv(DATA_DIR / "text_v2_val.csv", index=False)
-    print(f"[Text EN HC3+Fakeddit] total={len(df)} | train={n_tr} | val={len(df) - n_tr}")
+    print(f"[Text EN HC3+Fakeddit(fixed)] total={len(df)} | train={n_tr} | val={len(df) - n_tr} | fake_ratio={df['label'].mean():.2f}")
 
     # 3. Hindi/Hinglish Generalization Set (Exp 3 Cross-Lingual, 120+ balanced samples)
     hi_rows = []

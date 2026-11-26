@@ -1,6 +1,6 @@
 {
-  "en_val_f1": 0.9281,
-  "hindi_hinglish_acc": 0.7059,
-  "hindi_hinglish_f1": 0.7101,
-  "training_time_sec": 228.72
+  "en_val_f1": 0.9388,
+  "hindi_hinglish_acc": 0.8015,
+  "hindi_hinglish_f1": 0.797,
+  "training_time_sec": 443.47
 }

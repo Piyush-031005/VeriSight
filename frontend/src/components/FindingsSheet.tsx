@@ -475,7 +475,10 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
       </div>
 
       {/* 2B. VeriSight v2 Multi-Verification & Explainability */}
-      {(hasConsistency || v2_multi_verify?.gradcam_overlay_b64 || v2_multi_verify?.grounded_summary) && (
+      {(hasConsistency ||
+        v2_multi_verify?.gradcam_overlay_b64 ||
+        (v2_multi_verify?.token_attributions && v2_multi_verify.token_attributions.length > 0) ||
+        v2_multi_verify?.grounded_summary) && (
         <>
           <hr className="findings-rule" />
           <div className="findings-section-label">Multi-Verification &amp; Explainability (v2)</div>
@@ -522,6 +525,23 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
                 alt="Grad-CAM facial manipulation heatmap"
                 className="v2-gradcam-img"
               />
+            </div>
+          )}
+
+          {v2_multi_verify?.token_attributions && v2_multi_verify.token_attributions.length > 0 && (
+            <div className="v2-gradcam-card">
+              <div className="v2-verify-header">
+                <span>Top Influential Tokens (XLM-R Attention)</span>
+                <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>EN / HI / Hinglish</span>
+              </div>
+              <div className="v2-token-chips">
+                {v2_multi_verify.token_attributions.map((item, idx) => (
+                  <span key={`${item.token}-${idx}`} className="v2-token-chip">
+                    <span>{item.token}</span>
+                    <span className="v2-token-w">{(item.weight * 100).toFixed(1)}%</span>
+                  </span>
+                ))}
+              </div>
             </div>
           )}
 

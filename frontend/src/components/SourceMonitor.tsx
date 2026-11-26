@@ -60,6 +60,7 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const captionInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -386,8 +387,10 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
         <div className="monitor-caption-row">
           <label htmlFor="caption-input">Caption</label>
           <input
+            ref={captionInputRef}
             type="file"
             accept=".txt,.srt,.vtt"
+            style={{ display: 'none' }}
             aria-label="Load caption file"
             onChange={async (event) => {
               const caption = event.target.files?.[0];
@@ -396,20 +399,28 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
               const value = await caption.text();
               if (value.length > 50000) { onFileError('Caption exceeds 50,000 characters.'); return; }
               onTextChange(value);
+              event.target.value = '';
             }}
           />
+          <button
+            type="button"
+            className="monitor-caption-upload-btn"
+            onClick={() => captionInputRef.current?.click()}
+          >
+            + .SRT / .TXT
+          </button>
           <input
             id="caption-input"
             type="text"
             value={textContent}
             onChange={(e) => onTextChange(e.target.value)}
-            placeholder="Paste spoken words or transcript for cross-modal analysis…"
+            placeholder="Paste spoken words or caption for cross-modal verification…"
           />
           {textContent.length > 0 && (
             <button
               type="button"
               onClick={() => onTextChange('')}
-              style={{ background: 'none', border: 'none', color: '#5A6070', fontSize: 11, cursor: 'pointer', textDecoration: 'underline', flexShrink: 0 }}
+              className="monitor-caption-clear-btn"
             >
               Clear
             </button>

@@ -20,6 +20,58 @@ from src.models.v2.uncertainty import abstain_verdict, binary_entropy
 logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent.parent
 _CACHED_GRADCAM_MODEL = None
+_CACHED_TEXT_V2 = None
+
+
+def _get_text_v2_model():
+    global _CACHED_TEXT_V2
+    if _CACHED_TEXT_V2 is None:
+        ckpt_path = ROOT / "checkpoints" / "v2_text_head.pt"
+        if not ckpt_path.exists():
+            return None
+        try:
+            from transformers import AutoTokenizer
+            from src.models.v2.text_model import TextV2Detector
+
+            st = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+            backbone = st.get("backbone_name", "xlm-roberta-base")
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(backbone, local_files_only=True)
+            except Exception:
+                tokenizer = AutoTokenizer.from_pretrained(backbone)
+            model = TextV2Detector(
+                backbone_name=backbone,
+                freeze_backbone=True,
+                embedding_dim=st.get("embedding_dim", 256),
+            ).to(device)
+            model.token_attn.load_state_dict(st["token_attn"])
+            model.adapter.load_state_dict(st["adapter"])
+            model.classifier.load_state_dict(st["classifier"])
+            model.eval()
+            _CACHED_TEXT_V2 = (tokenizer, model, device)
+        except Exception as exc:
+            logger.warning(f"Could not load v2_text_head.pt ({exc}); keeping default text model.")
+            return None
+    return _CACHED_TEXT_V2
+
+
+def _predict_text_with_v2(text_str: str):
+    """Run trained XLM-RoBERTa v2 adapter on English/Hindi/Hinglish text and return score + token attributions."""
+    bundle = _get_text_v2_model()
+    if bundle is None:
+        return None
+    tokenizer, model, device = bundle
+    enc = tokenizer(text_str, truncation=True, max_length=256, return_tensors="pt")
+    ids = enc["input_ids"].to(device)
+    mask = enc["attention_mask"].to(device)
+    with torch.no_grad():
+        logits, _, token_weights = model(ids, mask, return_token_weights=True)
+        prob = float(torch.sigmoid(logits)[0].item())
+    raw_tokens = tokenizer.convert_ids_to_tokens(ids[0].tolist())
+    clean_tokens = [tok.lstrip("▁") for tok in raw_tokens]
+    top_tokens = model.explain_tokens(clean_tokens, token_weights[0], top_k=8)
+    return prob, top_tokens
 
 
 def _get_gradcam_model():
@@ -67,6 +119,38 @@ def run_v2_multi_verification(
     - Layer-3 Calibrated Uncertainty (entropy + 3-way verdict explanation)
     """
     t0 = time.perf_counter()
+    token_attributions: List[Dict[str, Any]] = []
+
+    # 0. Upgrade text branch with trained multilingual XLM-R (v2_text_head.pt) for EN / Hindi / Hinglish
+    if (
+        modality == "text"
+        and caption_text
+        and len(caption_text.strip()) >= 50
+        and len(caption_text.strip().split()) >= 10
+        and (base_result.get("text") or {}).get("reason") != "Offline text fixture"
+    ):
+        v2_txt = _predict_text_with_v2(caption_text.strip())
+        if v2_txt is not None:
+            prob_fake, token_attributions = v2_txt
+            txt_block = base_result.setdefault("text", {})
+            txt_block["score"] = round(prob_fake, 4)
+            txt_block["available"] = True
+            txt_block["model"] = "xlm-roberta-base (VeriSight v2 · EN/HI)"
+            txt_block["label"] = "Multilingual AI-writing & claim check"
+            txt_block["reason"] = None
+            band = txt_block.get("band") or [0.40, 0.60]
+            if band[0] <= prob_fake <= band[1]:
+                base_result["prediction"] = "UNCERTAIN"
+                base_result["confidence"] = None
+                txt_block["reason"] = "Score lies inside the uncertainty band."
+            elif prob_fake > band[1]:
+                base_result["prediction"] = "FAKE"
+                base_result["confidence"] = round(prob_fake, 4)
+            else:
+                base_result["prediction"] = "REAL"
+                base_result["confidence"] = round(1.0 - prob_fake, 4)
+            base_result["models_ready"] = True
+
     v_score = (base_result.get("video") or {}).get("score")
     if v_score is None and base_result.get("image"):
         v_score = base_result["image"].get("score")
@@ -139,6 +223,7 @@ def run_v2_multi_verification(
 
     base_result["v2_multi_verify"] = {
         "gradcam_overlay_b64": gradcam_b64,
+        "token_attributions": token_attributions,
         "consistency_scores": {
             "visual_text": visual_text_est,
             "audio_text": audio_text_sim,

@@ -106,6 +106,7 @@ export interface PredictResponse {
   disagreement?: string | null;
   v2_multi_verify?: {
     gradcam_overlay_b64?: string | null;
+    token_attributions?: { token: string; weight: number }[];
     consistency_scores?: {
       visual_text?: number | null;
       audio_text?: number | null;
