@@ -1,0 +1,112 @@
+# CUDA / local GPU training configuration for VeriSight (RTX 4050 6GB + compact datasets)
+# Use: python scripts/train_all.py --config configs/cuda.yaml
+
+project_name: "verisight-deepfake-cuda"
+seed: 42
+device: "cuda"
+
+paths:
+  data_root: "./Dataset"
+  manifest_path: "./data/manifest.csv"
+  train_split: "./data/train.csv"
+  val_split: "./data/val.csv"
+  test_split: "./data/test.csv"
+  checkpoints_dir: "./checkpoints"
+  logs_dir: "./logs"
+  preprocessed_cache_dir: "./data/cache"
+
+dataset:
+  category_regex: "(RealVideo-RealAudio|RealVideo-FakeAudio|FakeVideo-RealAudio|FakeVideo-FakeAudio)"
+  category_mapping:
+    "RealVideo-RealAudio":
+      abbreviation: "RARV"
+      video_label: "REAL"
+      audio_label: "REAL"
+      overall_label: "REAL"
+    "RealVideo-FakeAudio":
+      abbreviation: "FARV"
+      video_label: "REAL"
+      audio_label: "FAKE"
+      overall_label: "FAKE"
+    "FakeVideo-RealAudio":
+      abbreviation: "RAFV"
+      video_label: "FAKE"
+      audio_label: "REAL"
+      overall_label: "FAKE"
+    "FakeVideo-FakeAudio":
+      abbreviation: "FAFV"
+      video_label: "FAKE"
+      audio_label: "FAKE"
+      overall_label: "FAKE"
+
+splits:
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  group_column: "identity_id"
+  stratify_columns: ["ethnicity", "gender"]
+  min_samples_per_stratum_warning: 3
+
+preprocessing:
+  video:
+    sample_rate_fps: 1.0
+    max_frames: 8
+    hard_max_frames: 16
+    face_image_size: 224
+    min_face_size: 40
+    face_margin: 20
+  audio:
+    sample_rate: 16000
+    max_duration_seconds: 4.0
+    min_duration_seconds: 0.5
+
+models:
+  video:
+    backbone: "efficientnet_b0"
+    pretrained: true
+    freeze_backbone: false
+    embedding_dim: 128
+    dropout: 0.3
+  audio:
+    backbone: "facebook/wav2vec2-base"
+    freeze_backbone: true
+    embedding_dim: 128
+    dropout: 0.3
+  fusion:
+    input_dim: 258
+    hidden_dims: [256, 64]
+    dropout: 0.3
+
+training:
+  batch_size: 8
+  num_workers: 0
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  epochs: 5
+  early_stopping_patience: 3
+  oof_folds: 5
+
+calibration:
+  target_metric: "coverage"
+  target_value: 0.90
+  threshold_step: 0.01
+
+inference:
+  audio_model: pranjal-pravesh/wav2vec2-large-xlsr-deepfake-audio-classification
+  text_model: fakespot-ai/roberta-base-ai-text-detection-v1
+  asr_enabled: false
+  strategy: disagreement_max
+  window_seconds: 5
+  text_band: [0.35, 0.65]
+  audio_band: [0.45, 0.55]
+  video_band: [0.45, 0.55]
+  fusion_band: [0.40, 0.60]
+  tau_fusion: 0.65
+  tau_video: 0.70
+  tau_audio: 0.68
+  low_face_count_threshold: 3
+
+api:
+  host: "127.0.0.1"
+  port: 8000
+  cors_origins: ["http://localhost:5173", "http://127.0.0.1:5173"]

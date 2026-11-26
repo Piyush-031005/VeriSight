@@ -1,4 +1,5 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { UploadCloud, FileAudio, FileImage } from 'lucide-react';
 import { ModalityType, ImageCheckType } from '../types/api';
 
 const VIDEO_EXTS = ['.mp4', '.avi', '.mov', '.webm', '.mkv'];
@@ -62,7 +63,6 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Manage object URL
   useEffect(() => {
     if (file && modality !== 'text') {
       const url = URL.createObjectURL(file);
@@ -85,7 +85,6 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
       onFileError(null);
       if (!fileList || fileList.length === 0) return;
       const f = fileList[0];
-
       const allowed = getAllowedExtensions();
       const ext = getFileExt(f.name);
       if (!allowed.includes(ext)) {
@@ -102,112 +101,60 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
   );
 
   const handleDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
     if (modality !== 'text') setDragOver(true);
   };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); };
   const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     const { clientX, clientY } = e;
-    if (
-      clientX <= rect.left ||
-      clientX >= rect.right ||
-      clientY <= rect.top ||
-      clientY >= rect.bottom
-    ) {
+    if (clientX <= rect.left || clientX >= rect.right || clientY <= rect.top || clientY >= rect.bottom) {
       setDragOver(false);
     }
   };
-
   const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
     setDragOver(false);
-    if (modality !== 'text' && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    if (modality !== 'text' && e.dataTransfer.files?.length > 0) {
       validateAndSelect(e.dataTransfer.files);
     }
   };
 
   const handleVideoLoaded = () => {
     const v = videoRef.current;
-    if (v) {
-      setMediaMeta({
-        duration: isFinite(v.duration) ? v.duration : null,
-        width: v.videoWidth || null,
-        height: v.videoHeight || null,
-      });
-    }
+    if (v) setMediaMeta({ duration: isFinite(v.duration) ? v.duration : null, width: v.videoWidth || null, height: v.videoHeight || null });
   };
-
   const handleAudioLoaded = () => {
     const a = audioRef.current;
-    if (a) {
-      setMediaMeta({
-        duration: isFinite(a.duration) ? a.duration : null,
-        width: null,
-        height: null,
-      });
-    }
+    if (a) setMediaMeta({ duration: isFinite(a.duration) ? a.duration : null, width: null, height: null });
   };
-
   const handleImageLoaded = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
-    setMediaMeta({
-      duration: null,
-      width: img.naturalWidth || null,
-      height: img.naturalHeight || null,
-    });
+    setMediaMeta({ duration: null, width: img.naturalWidth || null, height: img.naturalHeight || null });
   };
 
-  const openFilePicker = () => {
-    fileInputRef.current?.click();
-  };
+  const openFilePicker = () => fileInputRef.current?.click();
 
   const getMonitorLabel = () => {
     switch (modality) {
-      case 'audio':
-        return 'ACOUSTIC MONITOR';
-      case 'image':
-        return 'IMAGE VIEWPORT';
-      case 'text':
-        return 'TEXT INSPECTION DESK';
-      case 'video':
-      default:
-        return 'SOURCE MONITOR';
+      case 'audio': return 'ACOUSTIC MONITOR';
+      case 'image': return 'IMAGE VIEWPORT';
+      case 'text':  return 'TEXT INSPECTION DESK';
+      default:      return 'SOURCE MONITOR';
     }
   };
 
   const getDropPrompt = () => {
     switch (modality) {
-      case 'audio':
-        return 'Drop an audio recording here';
-      case 'image':
-        return 'Drop a photograph or face crop here';
-      case 'video':
-      default:
-        return 'Drop a recording here';
+      case 'audio': return 'Drop an audio recording here';
+      case 'image': return 'Drop a photograph or face crop here';
+      default:      return 'Drop a video recording here';
     }
   };
 
-  const getChoosePrompt = () => {
-    switch (modality) {
-      case 'audio':
-        return 'Choose audio';
-      case 'image':
-        return 'Choose image';
-      case 'video':
-      default:
-        return 'Choose video';
-    }
-  };
+  const getAcceptedFormats = () =>
+    getAllowedExtensions().map((e) => e.toUpperCase().replace('.', '')).join(' · ');
 
   const wordCount = textContent.trim() ? textContent.trim().split(/\s+/).length : 0;
   const charCount = textContent.length;
@@ -227,53 +174,64 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
           type="file"
           accept={getAllowedExtensions().join(',')}
           style={{ display: 'none' }}
-          onChange={(e) => {
-            validateAndSelect(e.target.files);
-            e.target.value = '';
-          }}
+          onChange={(e) => { validateAndSelect(e.target.files); e.target.value = ''; }}
           aria-label="Choose media file"
         />
       )}
 
-      <div className={`monitor-viewport${dragOver ? ' drag-over' : ''}`}>
-        {/* Corner marks */}
-        <div className="monitor-corners-bottom" />
-
-        {/* Label */}
+      {/* Monitor title bar */}
+      <div className="monitor-header">
+        <div className="monitor-header-dots">
+          <span className="monitor-dot monitor-dot--red" />
+          <span className="monitor-dot monitor-dot--yellow" />
+          <span className="monitor-dot monitor-dot--green" />
+        </div>
         <span className="monitor-label">{getMonitorLabel()}</span>
+        <div style={{ width: 48 }} />
+      </div>
 
-        {/* Mode: TEXT */}
+      {/* Main viewport */}
+      <div className="monitor-viewport">
+        {/* Corner marks */}
+        <div className="monitor-corners"><span /></div>
+
+        {/* TEXT MODE */}
         {modality === 'text' && (
           <div className="monitor-text-editor">
             <textarea
               className="monitor-textarea"
               value={textContent}
               onChange={(e) => onTextChange(e.target.value)}
-              placeholder="Paste or compose article text, transcription, or statement to evaluate for synthetic generation patterns using fakespot-ai/roberta-base-ai-text-detection-v1..."
+              placeholder="Paste or type article text, transcription, or statement to evaluate for synthetic writing patterns…"
               aria-label="Text to inspect"
             />
           </div>
         )}
 
-        {/* Mode: FILE (Video, Audio, Image, Video+Text) */}
+        {/* EMPTY STATE (file modes) */}
         {modality !== 'text' && !file && !dragOver && (
           <div className="monitor-empty">
-            <p className="monitor-empty-text">{getDropPrompt()}</p>
-            <button
-              className="monitor-choose-btn"
-              onClick={openFilePicker}
-              type="button"
-            >
-              {getChoosePrompt()}
+            <div className="monitor-empty-icon">
+              {modality === 'audio' ? <FileAudio size={24} /> :
+               modality === 'image' ? <FileImage size={24} /> :
+               <UploadCloud size={24} />}
+            </div>
+            <div>
+              <p className="monitor-empty-text">{getDropPrompt()}</p>
+              <p className="monitor-empty-subtext">{getAcceptedFormats()} · Max 100 MB</p>
+            </div>
+            <button className="monitor-choose-btn" onClick={openFilePicker} type="button">
+              Choose file
             </button>
           </div>
         )}
 
+        {/* DRAG OVER PROMPT */}
         {modality !== 'text' && !file && dragOver && (
           <p className="monitor-drag-text">Release to load media</p>
         )}
 
-        {/* Video Display */}
+        {/* VIDEO */}
         {modality === 'video' && file && mediaUrl && (
           <video
             ref={videoRef}
@@ -285,17 +243,13 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
           />
         )}
 
-        {/* Audio Display */}
+        {/* AUDIO */}
         {modality === 'audio' && file && mediaUrl && (
           <div className="monitor-audio-box">
             <div className="monitor-audio-waveform">
-              <span className="monitor-audio-bar" style={{ animationDelay: '0.1s' }} />
-              <span className="monitor-audio-bar" style={{ animationDelay: '0.3s' }} />
-              <span className="monitor-audio-bar" style={{ animationDelay: '0.6s' }} />
-              <span className="monitor-audio-bar" style={{ animationDelay: '0.2s' }} />
-              <span className="monitor-audio-bar" style={{ animationDelay: '0.5s' }} />
-              <span className="monitor-audio-bar" style={{ animationDelay: '0.4s' }} />
-              <span className="monitor-audio-bar" style={{ animationDelay: '0.7s' }} />
+              {[0.1, 0.4, 0.2, 0.6, 0.3, 0.5, 0.15, 0.45, 0.25, 0.55, 0.35, 0.7].map((delay, i) => (
+                <span key={i} className="monitor-audio-bar" style={{ animationDelay: `${delay}s` }} />
+              ))}
             </div>
             <audio
               ref={audioRef}
@@ -307,7 +261,7 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
           </div>
         )}
 
-        {/* Image Display */}
+        {/* IMAGE */}
         {modality === 'image' && file && mediaUrl && (
           <img
             className="monitor-image"
@@ -317,112 +271,77 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
           />
         )}
 
-        {/* Drag over replace prompt */}
+        {/* DRAG OVER REPLACE OVERLAY */}
         {file && dragOver && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              background: 'rgba(32, 36, 32, 0.85)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 10,
-              borderRadius: 'var(--radius)',
-            }}
-          >
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: 'rgba(17,19,24,0.88)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 10, borderRadius: 'var(--radius-lg)',
+          }}>
             <p className="monitor-drag-text">Release to replace media</p>
           </div>
         )}
       </div>
 
-      {/* Image Selectable Check Row (Face-Swap vs General AI-Image) */}
+      {/* Image check type selector */}
       {modality === 'image' && onImageCheckTypeChange && (
-        <div style={{ padding: '10px 14px', borderTop: '1px solid var(--rule-light)', background: 'var(--page)' }}>
-          <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--ink-secondary)', marginBottom: '6px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-            Inspection Checkpoint:
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        <div className="monitor-check-type">
+          <div className="monitor-check-type-label">Inspection mode</div>
+          <div className="check-type-grid">
             <button
               type="button"
+              className={`check-type-btn${imageCheckType === 'face_swap' ? ' check-type-btn--active' : ''}`}
               onClick={() => onImageCheckTypeChange('face_swap')}
-              style={{
-                padding: '8px 10px',
-                fontSize: '12px',
-                fontWeight: 500,
-                borderRadius: 'var(--radius)',
-                border: '1px solid ' + (imageCheckType === 'face_swap' ? 'var(--ink)' : 'var(--rule)'),
-                background: imageCheckType === 'face_swap' ? 'var(--ink)' : 'var(--page-alt)',
-                color: imageCheckType === 'face_swap' ? 'var(--page)' : 'var(--ink)',
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
             >
-              <div style={{ fontWeight: 600 }}>Face-Swap Check</div>
-              <div style={{ fontSize: '10px', opacity: 0.8, marginTop: '2px' }}>Samson5827/deepfakeguard-v2</div>
+              <div className="check-type-btn-title">Face-Swap Detection</div>
+              <div className="check-type-btn-sub">deepfakeguard-v2 (ONNX)</div>
             </button>
-
             <button
               type="button"
+              className={`check-type-btn${imageCheckType === 'general_ai' ? ' check-type-btn--active' : ''}`}
               onClick={() => onImageCheckTypeChange('general_ai')}
-              style={{
-                padding: '8px 10px',
-                fontSize: '12px',
-                fontWeight: 500,
-                borderRadius: 'var(--radius)',
-                border: '1px solid ' + (imageCheckType === 'general_ai' ? 'var(--ink)' : 'var(--rule)'),
-                background: imageCheckType === 'general_ai' ? 'var(--ink)' : 'var(--page-alt)',
-                color: imageCheckType === 'general_ai' ? 'var(--page)' : 'var(--ink)',
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
             >
-              <div style={{ fontWeight: 600 }}>General AI-Image Check</div>
-              <div style={{ fontSize: '10px', opacity: 0.8, marginTop: '2px' }}>Organika/sdxl-detector</div>
+              <div className="check-type-btn-title">General AI-Image</div>
+              <div className="check-type-btn-sub">sdxl-detector</div>
             </button>
           </div>
         </div>
       )}
 
-      {/* Optional reference captions */}
+      {/* Reference caption for video/audio */}
       {(modality === 'video' || modality === 'audio') && (
-        <div className="monitor-text-overlay-input">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-            <label htmlFor="overlay-text">Reference caption (optional)</label>
-            {textContent.length > 0 && (
-              <button
-                type="button"
-                onClick={() => onTextChange('')}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--monitor-muted)',
-                  fontSize: '11px',
-                  cursor: 'pointer',
-                  padding: '0 4px',
-                  textDecoration: 'underline',
-                }}
-              >
-                Clear text
-              </button>
-            )}
-          </div>
-          <input type="file" accept=".txt,.srt,.vtt" aria-label="Load reference caption file"
-            onChange={async event => {
+        <div className="monitor-caption-row">
+          <label htmlFor="caption-input">Caption</label>
+          <input
+            type="file"
+            accept=".txt,.srt,.vtt"
+            aria-label="Load caption file"
+            onChange={async (event) => {
               const caption = event.target.files?.[0];
               if (!caption) return;
               if (caption.size > 200000) { onFileError('Caption exceeds the text limit.'); return; }
               const value = await caption.text();
               if (value.length > 50000) { onFileError('Caption exceeds 50,000 characters.'); return; }
               onTextChange(value);
-            }} />
+            }}
+          />
           <input
-            id="overlay-text"
+            id="caption-input"
             type="text"
             value={textContent}
             onChange={(e) => onTextChange(e.target.value)}
-            placeholder="Paste the spoken words for the first 30 seconds"
+            placeholder="Paste spoken words or transcript for cross-modal analysis…"
           />
+          {textContent.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onTextChange('')}
+              style={{ background: 'none', border: 'none', color: '#5A6070', fontSize: 11, cursor: 'pointer', textDecoration: 'underline', flexShrink: 0 }}
+            >
+              Clear
+            </button>
+          )}
         </div>
       )}
 
@@ -431,46 +350,31 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
         {modality === 'text' ? (
           <span className="monitor-meta" style={{ width: '100%', display: 'flex', alignItems: 'center' }}>
             <span>{wordCount} words</span>
-            <span>{charCount} characters</span>
-            <span>Est. read: {Math.max(1, Math.ceil(wordCount / 200))} min</span>
+            <span>{charCount} chars</span>
+            <span>~{Math.max(1, Math.ceil(wordCount / 200))} min read</span>
             {textContent.length > 0 && (
-              <button
-                className="monitor-replace-btn"
-                onClick={() => onTextChange('')}
-                type="button"
-                style={{ marginLeft: 'auto' }}
-              >
-                Clear text
+              <button className="monitor-replace-btn" onClick={() => onTextChange('')} type="button" style={{ marginLeft: 'auto' }}>
+                Clear
               </button>
             )}
           </span>
         ) : file ? (
           <>
-            <span className="monitor-filename" title={file.name}>
-              {file.name}
-            </span>
+            <span className="monitor-filename" title={file.name}>{file.name}</span>
             <span className="monitor-meta">
               <span>{formatBytes(file.size)}</span>
-              {mediaMeta.duration !== null && (
-                <span>{formatDuration(mediaMeta.duration)}</span>
-              )}
+              {mediaMeta.duration !== null && <span>{formatDuration(mediaMeta.duration)}</span>}
               {mediaMeta.width !== null && mediaMeta.height !== null && (
-                <span>
-                  {mediaMeta.width}×{mediaMeta.height}
-                </span>
+                <span>{mediaMeta.width}×{mediaMeta.height}</span>
               )}
             </span>
-            <button
-              className="monitor-replace-btn"
-              onClick={openFilePicker}
-              type="button"
-            >
-              Replace file
+            <button className="monitor-replace-btn" onClick={openFilePicker} type="button">
+              Replace
             </button>
           </>
         ) : (
           <span className="monitor-meta">
-            <span>{getAllowedExtensions().map((e) => e.toUpperCase().replace('.', '')).join(' · ')}</span>
+            <span>{getAcceptedFormats()}</span>
             <span>Max 100 MB</span>
           </span>
         )}

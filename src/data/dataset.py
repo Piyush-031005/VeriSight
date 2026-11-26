@@ -52,8 +52,13 @@ class VideoDataset(Dataset):
 
         if not face_tensors:
             # Fallback: dummy zero tensor if no face found in sample
-            faces_stack = torch.zeros((1, 3, self.image_size, self.image_size), dtype=torch.float32)
+            faces_stack = torch.zeros((self.max_frames, 3, self.image_size, self.image_size), dtype=torch.float32)
         else:
+            if len(face_tensors) < self.max_frames:
+                pad_count = self.max_frames - len(face_tensors)
+                face_tensors = face_tensors + [face_tensors[-1]] * pad_count
+            elif len(face_tensors) > self.max_frames:
+                face_tensors = face_tensors[: self.max_frames]
             faces_stack = torch.stack(face_tensors, dim=0)
 
         return faces_stack, label

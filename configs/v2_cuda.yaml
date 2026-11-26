@@ -1,0 +1,59 @@
+# VeriSight v2 Shared Configuration (2x RTX 4050 Workflow)
+# Shared across Laptop 1 (Vision/Text/Fusion/UI) and Laptop 2 (Audio/ASR/AV-Sync/Exp3)
+
+project_name: "verisight-v2-multimodal"
+seed: 42
+device: "cuda"
+
+paths:
+  checkpoints_dir: "./checkpoints"
+  cache_dir: "./data/cache"
+  results_dir: "./results"
+  plots_dir: "./results/plots"
+
+models_v2:
+  embedding_dim: 256
+  dropout: 0.30
+  visual:
+    clip_backbone: "openai/clip-vit-base-patch32"
+    artifact_backbone: "efficientnet_b0"
+    freeze_backbones: true
+    max_frames: 8
+    image_size: 224
+    checkpoint: "./checkpoints/v2_visual_head.pt"
+  audio:
+    backbone: "facebook/wav2vec2-xls-r-300m"
+    fallback_backbone: "facebook/wav2vec2-base"
+    freeze_backbone: true
+    sample_rate: 16000
+    max_duration_seconds: 5.0
+    checkpoint: "./checkpoints/v2_audio_xlsr_head.pt"
+  text:
+    backbone: "xlm-roberta-base"
+    freeze_backbone: true
+    max_length: 256
+    checkpoint: "./checkpoints/v2_text_head.pt"
+  asr:
+    model_size: "base"
+    compute_type: "float16"
+  fusion:
+    strategy: "consistency_gated"   # concat | cross_attention | consistency_gated
+    modality_dropout_prob: 0.20
+    hidden_dim: 256
+    num_heads: 4
+    checkpoint: "./checkpoints/v2_fusion_consistency_gated.pt"
+
+uncertainty:
+  mc_samples: 15
+  entropy_threshold: 0.45
+  temperature_init: 1.0
+  target_coverage: 0.85
+
+training_v2:
+  batch_size: 16
+  amp: true
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  epochs: 10
+  early_stopping_patience: 3
+  seeds: [42, 123, 2025]

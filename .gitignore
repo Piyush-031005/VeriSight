@@ -35,14 +35,21 @@ env/
 .DS_Store
 Thumbs.db
 
-# Project data & models (CRITICAL: Do not commit datasets or checkpoints)
+# Project data & models (CRITICAL: Do not commit raw datasets or large backbones)
+Dataset/
+Dataset_L2/
 data/*
 !data/README.md
 !data/.gitkeep
+!data/cache/
+data/cache/*
+!data/cache/*.npz
+!data/cache/*.json
 
 checkpoints/*
 !checkpoints/README.md
 !checkpoints/.gitkeep
+!checkpoints/v2_*.pt
 
 # Logs and outputs
 *.log

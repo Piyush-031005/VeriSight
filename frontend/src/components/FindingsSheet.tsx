@@ -13,13 +13,13 @@ interface FindingsSheetProps {
 }
 
 const PATH_LABELS: Record<string, string> = {
-  fusion: 'Independent Multimodal Evaluation (Visual + Audio)',
-  video_only: 'Visual Face-Swap Stream Direct',
-  audio_only: 'Acoustic Speech Stream Direct',
-  image_only: 'Photographic & Facial Analysis',
-  text_only: 'Linguistic AI-Writing Analysis',
-  video_text_fusion: 'Audio, visual and caption assessment',
-  no_modalities: 'No Usable Signals in Input',
+  fusion:              'Multimodal Fusion (Visual + Audio)',
+  video_only:          'Visual Face-Swap Stream',
+  audio_only:          'Acoustic Speech Stream',
+  image_only:          'Photographic Analysis',
+  text_only:           'Linguistic Style Analysis',
+  video_text_fusion:   'Audio + Visual + Caption',
+  no_modalities:       'No Usable Signals',
 };
 
 export const FindingsSheet: React.FC<FindingsSheetProps> = ({
@@ -34,54 +34,52 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
 }) => {
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  // Helper for assessment title
   const getAssessmentTitle = (res: PredictResponse) => {
     if (res.prediction === 'UNCERTAIN') {
-      if (modality === 'image' && res.image?.score === null && res.image?.reason) {
-        return res.image.reason;
-      }
-      if (modality === 'audio' && res.audio?.score === null && res.audio?.reason) {
-        return res.audio.reason;
-      }
-      if (modality === 'text' && res.text?.score === null && res.text?.reason) {
-        return 'Linguistic estimation omitted';
-      }
-      if (modality === 'video' && res.video?.score === null && res.audio?.score === null) {
-        return 'No usable video or audio signals';
-      }
+      if (modality === 'image' && res.image?.score === null && res.image?.reason) return res.image.reason;
+      if (modality === 'audio' && res.audio?.score === null && res.audio?.reason) return res.audio.reason;
+      if (modality === 'text'  && res.text?.score  === null && res.text?.reason)  return 'Linguistic estimation omitted';
+      if (modality === 'video' && res.video?.score === null && res.audio?.score === null) return 'No usable video or audio signals';
       return 'Inconclusive';
     }
-
     switch (res.prediction) {
-      case 'REAL':
-        return modality === 'text' ? 'Lower AI-writing style estimate' : 'No manipulation detected';
-      case 'FAKE':
-        return modality === 'text' ? 'Elevated AI-writing style estimate' : 'Evidence flagged';
-      default:
-        return 'Inconclusive';
+      case 'REAL': return modality === 'text' ? 'Lower AI-writing style probability' : 'No manipulation detected';
+      case 'FAKE': return modality === 'text' ? 'Elevated AI-writing style probability' : 'Manipulation evidence flagged';
+      default:     return 'Inconclusive';
     }
   };
 
   const getAssessmentClass = (res: PredictResponse) => {
     switch (res.prediction) {
-      case 'REAL':
-        return 'assessment-heading--real';
-      case 'FAKE':
-        return 'assessment-heading--fake';
-      case 'UNCERTAIN':
-      default:
-        return 'assessment-heading--uncertain';
+      case 'REAL':      return 'assessment-heading--real';
+      case 'FAKE':      return 'assessment-heading--fake';
+      default:          return 'assessment-heading--uncertain';
+    }
+  };
+
+  const getCardClass = (res: PredictResponse) => {
+    switch (res.prediction) {
+      case 'REAL':      return 'assessment-card--real';
+      case 'FAKE':      return 'assessment-card--fake';
+      default:          return 'assessment-card--uncertain';
+    }
+  };
+
+  const getBadgeClass = (res: PredictResponse) => {
+    switch (res.prediction) {
+      case 'REAL':      return 'assessment-verdict-badge--real';
+      case 'FAKE':      return 'assessment-verdict-badge--fake';
+      default:          return 'assessment-verdict-badge--uncertain';
     }
   };
 
   const getAssessmentMeaning = (res: PredictResponse) => {
-    if (modality === 'text') {
-      return res.text?.reason || 'Experimental AI-writing style estimate. Authorship requires independent evidence.';
-    }
-    if (res.disagreement) return 'The overall decision includes the available stream findings below.';
+    if (modality === 'text') return res.text?.reason || 'Experimental AI-writing style estimate. Independent verification required.';
+    if (res.disagreement)   return 'The overall decision incorporates both stream findings below.';
     const branch = modality === 'image' ? res.image : res.audio;
     return branch?.reason || (res.prediction === 'FAKE'
-      ? 'The selected detector flagged this sample.' : 'The selected detector found a low manipulation score.');
+      ? 'The selected detector flagged this sample.'
+      : 'The selected detector found a low manipulation score.');
   };
 
   const getSignalBarFillClass = (score: number, band?: [number, number] | null) => {
@@ -91,11 +89,11 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
 
   const hasInput = modality === 'text' ? textContent.trim().length > 0 : file !== null;
 
-  // State 1: Awaiting Input
+  // ── State 1: Awaiting Input ────────────────────────────────────────
   if (!hasInput) {
     return (
       <div className="findings">
-        <div className="findings-section-label">ANALYSIS</div>
+        <div className="findings-section-label">Analysis</div>
         <h2 className="findings-empty-heading">
           {modality === 'text' ? 'Awaiting textual input' : 'Awaiting media intake'}
         </h2>
@@ -107,7 +105,7 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
 
         <hr className="findings-rule" />
 
-        <div className="findings-section-label">EXPECTED FINDINGS</div>
+        <div className="findings-section-label">Expected Findings</div>
         <div className="findings-index">
           <div className="findings-index-row">
             <span className="findings-index-label">Overall assessment</span>
@@ -141,7 +139,7 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
           )}
           {modality === 'text' && (
             <div className="findings-index-row">
-              <span className="findings-index-label">Experimental AI-writing style estimate</span>
+              <span className="findings-index-label">AI-writing style estimate</span>
               <span className="findings-index-value">—</span>
             </div>
           )}
@@ -150,37 +148,32 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
     );
   }
 
-  // State 2: Error
+  // ── State 2: Error ─────────────────────────────────────────────────
   if (error) {
     return (
       <div className="findings">
-        <div className="findings-section-label">ANALYSIS STATUS</div>
+        <div className="findings-section-label">Analysis Status</div>
         <div className="findings-error">
           <div className="findings-error-label">Analysis could not be completed</div>
-          <div>{error}</div>
-          <button className="retry-btn" type="button" onClick={onAnalyze}>
-            Retry analysis
-          </button>
+          <div style={{ fontSize: 13, color: 'var(--ink-2)', marginTop: 4 }}>{error}</div>
+          <button className="retry-btn" type="button" onClick={onAnalyze}>Retry analysis</button>
         </div>
-
-        <hr className="findings-rule" />
-
-        <div className="findings-section-label">SAMPLE STATUS</div>
+        <div className="findings-section-label">Sample Status</div>
         <div className="findings-index">
           <div className="findings-index-row">
             <span className="findings-index-label">Target modality</span>
-            <span className="findings-index-value">{modality.replace('_', ' ').toUpperCase()}</span>
+            <span className="findings-index-value">{modality.toUpperCase()}</span>
           </div>
           <div className="findings-index-row">
             <span className="findings-index-label">Pipeline state</span>
-            <span className="findings-index-value">Failed</span>
+            <span className="findings-index-value" style={{ color: 'var(--fake)' }}>Failed</span>
           </div>
         </div>
       </div>
     );
   }
 
-  // State 3: Input ready / Analyzing
+  // ── State 3: Ready / Analyzing ─────────────────────────────────────
   if (!result) {
     return (
       <div className="findings">
@@ -191,59 +184,47 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
           disabled={isLoading}
         >
           {isLoading && <span className="run-analysis-spinner" aria-hidden="true" />}
-          <span>{isLoading ? 'Running CPU inference…' : `Run ${modality.replace('_', ' ')} analysis`}</span>
+          <span>{isLoading ? 'Running inference…' : `Run ${modality} analysis`}</span>
         </button>
 
         <hr className="findings-rule" />
 
-        <div className="findings-section-label">INSPECTION CHECKLIST</div>
+        <div className="findings-section-label">Inspection Checklist</div>
         <div className="findings-index">
           <div className="findings-index-row">
             <span className="findings-index-label">Overall assessment</span>
-            <span className="findings-index-value">
-              {isLoading ? 'Running models…' : 'Ready to inspect'}
-            </span>
+            <span className="findings-index-value">{isLoading ? 'Running models…' : 'Ready to inspect'}</span>
           </div>
           {modality === 'video' && (
             <>
               <div className="findings-index-row">
                 <span className="findings-index-label">Visual frames (deepfakeguard-v2)</span>
-                <span className="findings-index-value">
-                  {isLoading ? 'Sampling 8 frames & face cropping…' : 'Pending'}
-                </span>
+                <span className="findings-index-value">{isLoading ? 'Sampling 8 frames & face cropping…' : 'Pending'}</span>
               </div>
               <div className="findings-index-row">
-                <span className="findings-index-label">Audio soundtrack</span>
-                <span className="findings-index-value">
-                  {isLoading ? 'Extracting speech to 16 kHz…' : 'Pending'}
-                </span>
+                <span className="findings-index-label">Audio soundtrack (wav2vec2-xlsr)</span>
+                <span className="findings-index-value">{isLoading ? 'Extracting speech to 16 kHz…' : 'Pending'}</span>
               </div>
             </>
           )}
           {modality === 'audio' && (
             <div className="findings-index-row">
-              <span className="findings-index-label">Acoustic classifier</span>
-              <span className="findings-index-value">
-                {isLoading ? 'Windowing & evaluating speech…' : 'Pending'}
-              </span>
+              <span className="findings-index-label">Acoustic classifier (wav2vec2-xlsr)</span>
+              <span className="findings-index-value">{isLoading ? 'Windowing & evaluating speech…' : 'Pending'}</span>
             </div>
           )}
           {modality === 'image' && (
             <div className="findings-index-row">
               <span className="findings-index-label">
-                {imageCheckType === 'general_ai' ? 'General AI-image (sdxl-detector)' : 'Face-swap (deepfakeguard-v2)'}
+                {imageCheckType === 'general_ai' ? 'AI-image (sdxl-detector)' : 'Face-swap (deepfakeguard-v2)'}
               </span>
-              <span className="findings-index-value">
-                {isLoading ? 'Evaluating image pixels…' : 'Pending'}
-              </span>
+              <span className="findings-index-value">{isLoading ? 'Evaluating image pixels…' : 'Pending'}</span>
             </div>
           )}
           {modality === 'text' && (
             <div className="findings-index-row">
-              <span className="findings-index-label">AI writing style (chatgpt-detector-roberta)</span>
-              <span className="findings-index-value">
-                {isLoading ? 'Tokenizing and evaluating style…' : 'Pending'}
-              </span>
+              <span className="findings-index-label">AI writing style (RoBERTa)</span>
+              <span className="findings-index-value">{isLoading ? 'Tokenizing & evaluating style…' : 'Pending'}</span>
             </div>
           )}
         </div>
@@ -251,58 +232,52 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
     );
   }
 
-  // State 4: Completed Result
+  // ── State 4: Completed Result ──────────────────────────────────────
   const { video, audio, timing, warnings, image, text, cross_modal, disagreement } = result;
   const filteredWarnings = (warnings || []).filter((w) => !w.startsWith('[UNVALIDATED]'));
 
   return (
     <div className="findings">
-      {/* 1. Overall Assessment */}
-      <div className="findings-section-label">ASSESSMENT</div>
-
-      <h2 className={`assessment-heading ${getAssessmentClass(result)}`}>
-        {getAssessmentTitle(result)}
-      </h2>
-
-      <p className="assessment-meaning">{getAssessmentMeaning(result)}</p>
-
-      {/* Disagreement Callout (if branches disagree) */}
-      {disagreement && (
-        <div style={{
-          marginTop: '12px',
-          padding: '10px 12px',
-          background: 'var(--page-alt)',
-          borderLeft: '3px solid var(--action)',
-          borderRadius: 'var(--radius-sm)',
-        }}>
-          <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--ink-secondary)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-            Cross-Modal Finding
-          </div>
-          <div style={{ fontSize: '13px', color: 'var(--ink)', marginTop: '3px' }}>
-            {disagreement}
-          </div>
+      {/* 1. Assessment Card */}
+      <div className={`assessment-card ${getCardClass(result)}`}>
+        <div className="assessment-verdict-row">
+          <span className={`assessment-verdict-badge ${getBadgeClass(result)}`}>
+            {result.prediction}
+          </span>
+          {result.confidence != null && (
+            <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+              {(result.confidence * 100).toFixed(1)}% confidence
+            </span>
+          )}
         </div>
-      )}
+        <h2 className={`assessment-heading ${getAssessmentClass(result)}`}>
+          {getAssessmentTitle(result)}
+        </h2>
+        <p className="assessment-meaning">{getAssessmentMeaning(result)}</p>
+
+        {disagreement && (
+          <div className="disagreement-callout">
+            <div className="disagreement-callout-label">Cross-Modal Finding</div>
+            <div className="disagreement-callout-text">{disagreement}</div>
+          </div>
+        )}
+      </div>
 
       <hr className="findings-rule" />
 
       {/* 2. Modality Signals */}
-      <div className="findings-section-label">MODALITY SIGNALS</div>
-
+      <div className="findings-section-label">Modality Signals</div>
       <div className="findings-index">
-        {/* VIDEO MODALITY: Visual Stream Signal */}
+
+        {/* VIDEO: Visual */}
         {modality === 'video' && video && (
           <div className="signal-row">
             <div className="signal-row-header">
-              <span className="signal-row-label">
-                Visual face-swap signal ({video.model})
-              </span>
+              <span className="signal-row-label">Visual face-swap ({video.model})</span>
               <span className="signal-row-value">
-                {video.score !== null ? (
-                  `${(video.score * 100).toFixed(1)}% detector score`
-                ) : (
-                  <span style={{ color: 'var(--ink-muted)' }}>{video.reason || 'No usable face'}</span>
-                )}
+                {video.score !== null
+                  ? `${(video.score * 100).toFixed(1)}%`
+                  : <span style={{ color: 'var(--ink-4)' }}>{video.reason || 'No usable face'}</span>}
               </span>
             </div>
             {video.score !== null ? (
@@ -313,31 +288,25 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
                     style={{ width: `${Math.min(100, Math.max(0, video.score * 100))}%` }}
                   />
                 </div>
-                <div style={{ fontSize: '11px', color: 'var(--ink-muted)', marginTop: '2px' }}>
-                  Median score across {video.faces_detected}/{video.frames_analyzed} frames with detected faces (18% crop margin)
+                <div className="signal-note">
+                  Median across {video.faces_detected}/{video.frames_analyzed} frames · 18% crop margin
                 </div>
               </>
             ) : (
-              <div style={{ fontSize: '11px', color: 'var(--ink-muted)', marginTop: '2px' }}>
-                {video.reason || 'No human faces detected across sampled 8 frames.'}
-              </div>
+              <div className="signal-note">{video.reason || 'No human faces detected across sampled frames.'}</div>
             )}
           </div>
         )}
 
-        {/* VIDEO MODALITY: Audio Stream Signal */}
+        {/* VIDEO: Audio */}
         {modality === 'video' && audio && (
           <div className="signal-row">
             <div className="signal-row-header">
-              <span className="signal-row-label">
-                Soundtrack acoustic speech signal ({audio.model})
-              </span>
+              <span className="signal-row-label">Acoustic speech ({audio.model})</span>
               <span className="signal-row-value">
-                {audio.score !== null ? (
-                  `${(audio.score * 100).toFixed(1)}% detector score`
-                ) : (
-                  <span style={{ color: 'var(--ink-muted)' }}>{audio.reason || 'Silence or no speech'}</span>
-                )}
+                {audio.score !== null
+                  ? `${(audio.score * 100).toFixed(1)}%`
+                  : <span style={{ color: 'var(--ink-4)' }}>{audio.reason || 'Silence or no speech'}</span>}
               </span>
             </div>
             {audio.score !== null ? (
@@ -348,31 +317,25 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
                     style={{ width: `${Math.min(100, Math.max(0, audio.score * 100))}%` }}
                   />
                 </div>
-                <div style={{ fontSize: '11px', color: 'var(--ink-muted)', marginTop: '2px' }}>
-                  Acoustic speech evaluated over {audio.duration_seconds.toFixed(1)}s (16 kHz mono)
+                <div className="signal-note">
+                  Evaluated over {audio.duration_seconds.toFixed(1)}s · 16 kHz mono
                 </div>
               </>
             ) : (
-              <div style={{ fontSize: '11px', color: 'var(--ink-muted)', marginTop: '2px' }}>
-                {audio.reason || 'Audio stream missing, silent, or shorter than 0.5s.'}
-              </div>
+              <div className="signal-note">{audio.reason || 'Audio stream missing, silent, or too short.'}</div>
             )}
           </div>
         )}
 
-        {/* AUDIO MODALITY: Acoustic Stream Signal */}
+        {/* AUDIO only */}
         {modality === 'audio' && audio && (
           <div className="signal-row">
             <div className="signal-row-header">
-              <span className="signal-row-label">
-                Acoustic speech classifier ({audio.model})
-              </span>
+              <span className="signal-row-label">Acoustic classifier ({audio.model})</span>
               <span className="signal-row-value">
-                {audio.score !== null ? (
-                  `${(audio.score * 100).toFixed(1)}% detector score`
-                ) : (
-                  <span style={{ color: 'var(--ink-muted)' }}>{audio.reason || 'Silence or insufficient speech'}</span>
-                )}
+                {audio.score !== null
+                  ? `${(audio.score * 100).toFixed(1)}%`
+                  : <span style={{ color: 'var(--ink-4)' }}>{audio.reason || 'Silence or insufficient speech'}</span>}
               </span>
             </div>
             {audio.score !== null ? (
@@ -383,26 +346,22 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
                 />
               </div>
             ) : (
-              <div style={{ fontSize: '11px', color: 'var(--ink-muted)', marginTop: '2px' }}>
-                {audio.reason || 'Audio contains silence, no speech, or is shorter than 0.5s.'}
-              </div>
+              <div className="signal-note">{audio.reason}</div>
             )}
           </div>
         )}
 
-        {/* IMAGE MODALITY: Image Signal */}
+        {/* IMAGE */}
         {modality === 'image' && image && (
           <div className="signal-row">
             <div className="signal-row-header">
               <span className="signal-row-label">
-                {image.check_type === 'general_ai' ? 'General AI-image check' : 'Face-swap check'} ({image.model})
+                {image.check_type === 'general_ai' ? 'General AI-image' : 'Face-swap check'} ({image.model})
               </span>
               <span className="signal-row-value">
-                {image.score !== null ? (
-                  `${(image.score * 100).toFixed(1)}% detector score`
-                ) : (
-                  <span style={{ color: 'var(--ink-muted)' }}>{image.reason || 'No usable face'}</span>
-                )}
+                {image.score !== null
+                  ? `${(image.score * 100).toFixed(1)}%`
+                  : <span style={{ color: 'var(--ink-4)' }}>{image.reason || 'No usable face'}</span>}
               </span>
             </div>
             {image.score !== null ? (
@@ -413,26 +372,22 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
                 />
               </div>
             ) : (
-              <div style={{ fontSize: '11px', color: 'var(--ink-muted)', marginTop: '2px' }}>
-                {image.reason || 'No usable face detected in the uploaded image.'}
-              </div>
+              <div className="signal-note">{image.reason}</div>
             )}
           </div>
         )}
 
-        {/* TEXT MODALITY: Text Signal */}
+        {/* TEXT */}
         {modality === 'text' && text && (
           <div className="signal-row">
             <div className="signal-row-header">
               <span className="signal-row-label">
-                {text.label || 'Experimental AI-writing style estimate'} ({text.model})
+                {text.label || 'AI-writing style estimate'} ({text.model})
               </span>
               <span className="signal-row-value">
-                {text.score !== null ? (
-                  `${(text.score * 100).toFixed(1)}% ChatGPT / AI style prob.`
-                ) : (
-                  <span style={{ color: 'var(--ink-muted)' }}>{text.reason || 'Omitted'}</span>
-                )}
+                {text.score !== null
+                  ? `${(text.score * 100).toFixed(1)}% AI probability`
+                  : <span style={{ color: 'var(--ink-4)' }}>{text.reason || 'Omitted'}</span>}
               </span>
             </div>
             {text.score !== null ? (
@@ -443,51 +398,81 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
                 />
               </div>
             ) : (
-              <div style={{ fontSize: '11px', color: 'var(--ink-muted)', marginTop: '2px' }}>
-                {text.reason || 'Text passage is too short (< 50 chars or < 10 words) or language is unsupported.'}
-              </div>
+              <div className="signal-note">{text.reason}</div>
             )}
           </div>
         )}
 
-        {[['Visual', video?.band], ['Acoustic', audio?.band], ['Writing style', text?.band],
-          ['Fusion', result.fusion?.band]].map(([label, band]) => Array.isArray(band) && (
+        {/* Uncertainty band notes */}
+        {[['Visual', video?.band], ['Acoustic', audio?.band], ['Writing style', text?.band], ['Fusion', result.fusion?.band]]
+          .filter(([, b]) => Array.isArray(b))
+          .map(([label, band]) => (
             <p className="evidence-note" key={String(label)}>
-              {label} uncertainty band {band[0].toFixed(2)}–{band[1].toFixed(2)} (uncalibrated)
+              {label} uncertainty band {(band as number[])[0].toFixed(2)}–{(band as number[])[1].toFixed(2)} (uncalibrated)
             </p>
           ))}
+
+        {/* Cross-modal transcript */}
         {cross_modal && (
           <section className="signal-row">
-            <h3>Speech transcript</h3>
-            <p>{cross_modal.transcript || cross_modal.transcript_status}</p>
-            {cross_modal.reason && <p>{cross_modal.reason}</p>}
+            <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-2)', marginBottom: 4 }}>
+              Speech transcript
+            </h3>
+            <p style={{ fontSize: 13, color: 'var(--ink-2)' }}>
+              {cross_modal.transcript || cross_modal.transcript_status}
+            </p>
+            {cross_modal.reason && <p style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>{cross_modal.reason}</p>}
             {cross_modal.wer != null && (
-              <p>Caption word error rate {cross_modal.wer.toFixed(3)} · Character error rate {cross_modal.cer?.toFixed(3)}
-                {' · '}{cross_modal.similarity_method} {cross_modal.cross_modal_consistency?.toFixed(3)}</p>
+              <p style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>
+                Caption WER {cross_modal.wer.toFixed(3)} · CER {cross_modal.cer?.toFixed(3)}{' '}
+                · {cross_modal.similarity_method} {cross_modal.cross_modal_consistency?.toFixed(3)}
+              </p>
             )}
           </section>
         )}
-        {text && modality !== 'text' && <p>Transcript writing-style estimate {text.score?.toFixed(4) ?? text.reason}</p>}
-        {!!text?.sentences?.length && <details className="signal-row" open>
-          <summary>Sentence estimates ({text.sentences.length} sampled)</summary>
-          <p>Each sentence is scored independently. The passage estimate uses overlapping token windows.</p>
-          {text.sentences.map(sentence => <p key={sentence.start}>
-            <mark>{sentence.text}</mark> <strong>{sentence.score.toFixed(4)}</strong>
-          </p>)}
-        </details>}
-        {!!text?.spans?.length && <details className="signal-row">
-          <summary>Writing-style evidence by passage span ({text.spans.length})</summary>
-          {text.spans.map(span => <blockquote key={span.start}>
-            <strong>Characters {span.start + 1}–{span.end} · {span.score.toFixed(4)}</strong>
-            <p><mark>{span.text}</mark></p>
-          </blockquote>)}
-        </details>}
-        {result.fusion?.score != null && <p>Uncalibrated fusion score {result.fusion.score.toFixed(4)}</p>}
+
+        {/* Transcript text analysis (video/audio mode) */}
+        {text && modality !== 'text' && (
+          <p className="evidence-note">
+            Transcript AI-writing estimate: {text.score?.toFixed(4) ?? text.reason}
+          </p>
+        )}
+
+        {/* Sentence-level breakdown */}
+        {!!text?.sentences?.length && (
+          <details className="signal-row" open>
+            <summary>Sentence estimates ({text.sentences.length} sampled)</summary>
+            <p style={{ fontSize: 12, color: 'var(--ink-3)', marginBottom: 6 }}>
+              Each sentence is scored independently. Passage estimate uses overlapping token windows.
+            </p>
+            {text.sentences.map((s) => (
+              <p key={s.start} style={{ fontSize: 12, margin: '4px 0' }}>
+                <mark>{s.text}</mark> <strong>{s.score.toFixed(4)}</strong>
+              </p>
+            ))}
+          </details>
+        )}
+
+        {!!text?.spans?.length && (
+          <details className="signal-row">
+            <summary>Writing-style evidence by span ({text.spans.length})</summary>
+            {text.spans.map((s) => (
+              <blockquote key={s.start}>
+                <strong>Chars {s.start + 1}–{s.end} · {s.score.toFixed(4)}</strong>
+                <p><mark>{s.text}</mark></p>
+              </blockquote>
+            ))}
+          </details>
+        )}
+
+        {result.fusion?.score != null && (
+          <p className="evidence-note">Uncalibrated fusion score {result.fusion.score.toFixed(4)}</p>
+        )}
       </div>
 
       <hr className="findings-rule" />
 
-      {/* 3. Technical Details Disclosure */}
+      {/* 3. Technical Details */}
       <div className="tech-details">
         <button
           className="tech-details-toggle"
@@ -495,41 +480,32 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
           onClick={() => setDetailsOpen(!detailsOpen)}
           aria-expanded={detailsOpen}
         >
-          <span
-            className={`tech-details-toggle-chevron${
-              detailsOpen ? ' tech-details-toggle-chevron--open' : ''
-            }`}
-          />
-          <span>Technical details & forensics breakdown</span>
+          <span className={`tech-details-toggle-chevron${detailsOpen ? ' tech-details-toggle-chevron--open' : ''}`} />
+          <span>Technical details &amp; forensics breakdown</span>
         </button>
 
         {detailsOpen && (
           <div className="tech-details-content">
             <div className="tech-detail-row">
               <span className="tech-detail-label">Decision path</span>
-              <span className="tech-detail-value">
-                {PATH_LABELS[result.prediction_path] || result.prediction_path}
-              </span>
+              <span className="tech-detail-value">{PATH_LABELS[result.prediction_path] || result.prediction_path}</span>
             </div>
-
             <div className="tech-detail-row">
               <span className="tech-detail-label">Confidence</span>
               <span className="tech-detail-value">
-                {result.confidence == null ? 'Unavailable' : (result.confidence * 100).toFixed(1) + '%'}
+                {result.confidence == null ? 'Unavailable' : `${(result.confidence * 100).toFixed(1)}%`}
               </span>
             </div>
-
             {text && (
               <div className="tech-detail-row">
                 <span className="tech-detail-label">Word count</span>
                 <span className="tech-detail-value">{text.word_count} words</span>
               </div>
             )}
-
             {image && (
               <>
                 <div className="tech-detail-row">
-                  <span className="tech-detail-label">Detection check</span>
+                  <span className="tech-detail-label">Detection model</span>
                   <span className="tech-detail-value">{image.model}</span>
                 </div>
                 {image.resolution && (
@@ -540,12 +516,11 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
                 )}
               </>
             )}
-
             {video && (
               <>
                 <div className="tech-detail-row">
                   <span className="tech-detail-label">Frames analyzed</span>
-                  <span className="tech-detail-value">{video.frames_analyzed} frames (evenly spaced)</span>
+                  <span className="tech-detail-value">{video.frames_analyzed} (evenly spaced)</span>
                 </div>
                 <div className="tech-detail-row">
                   <span className="tech-detail-label">Faces tracked</span>
@@ -553,33 +528,27 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
                 </div>
               </>
             )}
-
             {audio && (
               <div className="tech-detail-row">
                 <span className="tech-detail-label">Audio duration</span>
                 <span className="tech-detail-value">{audio.duration_seconds.toFixed(2)}s</span>
               </div>
             )}
-
             <div className="tech-detail-row">
               <span className="tech-detail-label">Pipeline wall-clock</span>
-              <span className="tech-detail-value">
-                {timing.total_pipeline_sec.toFixed(2)}s
-              </span>
+              <span className="tech-detail-value">{timing.total_pipeline_sec.toFixed(2)}s</span>
             </div>
           </div>
         )}
       </div>
 
-      {/* 4. Substantive Diagnostics */}
+      {/* 4. Diagnostic warnings */}
       {filteredWarnings.length > 0 && (
         <>
           <hr className="findings-rule" />
-          <div className="findings-section-label">DIAGNOSTIC NOTES</div>
+          <div className="findings-section-label">Diagnostic Notes</div>
           <ul className="warnings-list">
-            {filteredWarnings.map((warn, i) => (
-              <li key={i}>{warn}</li>
-            ))}
+            {filteredWarnings.map((warn, i) => <li key={i}>{warn}</li>)}
           </ul>
         </>
       )}
