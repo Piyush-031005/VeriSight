@@ -12,6 +12,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from src.api.schemas import HealthResponse, PredictResponse, TextPredictRequest
 from src.data.audio_preprocessing import is_ffmpeg_available
+from src.inference.v2_bridge import run_v2_multi_verification
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,7 @@ async def predict_video(
 
         if strict and not result["models_ready"]:
             raise HTTPException(503, "Required video or audio evidence unavailable")
+        result = run_v2_multi_verification(result, media_path=temp_path, modality="video", caption_text=text or "")
         return PredictResponse(**result)
 
     except HTTPException:
@@ -165,6 +167,7 @@ async def predict_audio(
 
         text = await reference_caption(text, subtitles)
         result = pipeline.predict_audio(temp_path, text, strategy)
+        result = run_v2_multi_verification(result, media_path=temp_path, modality="audio", caption_text=text or "")
         return PredictResponse(**result)
     except HTTPException:
         raise
@@ -216,6 +219,7 @@ async def predict_image(
         if check_type not in {None, "face_swap", "sdxl", "general_ai"}:
             raise HTTPException(400, "Unknown image check")
         result = pipeline.predict_image(temp_path, check_type=check_type or "face_swap")
+        result = run_v2_multi_verification(result, media_path=temp_path, modality="image")
         return PredictResponse(**result)
     except HTTPException:
         raise
@@ -283,6 +287,7 @@ async def predict_text(
 
     try:
         result = pipeline.predict_text(text_str)
+        result = run_v2_multi_verification(result, modality="text", caption_text=text_str)
         return PredictResponse(**result)
     except Exception as e:
         logger.exception("Text inference failed.")

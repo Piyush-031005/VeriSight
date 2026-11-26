@@ -127,6 +127,7 @@ class PredictResponse(BaseModel):
     text: Optional[TextEvidence] = None
     cross_modal: Optional[CrossModalTextEvidence] = None
     disagreement: Optional[str] = Field(None, description="Cross-modal disagreement explanation")
+    v2_multi_verify: Optional[Dict[str, Any]] = Field(None, description="VeriSight v2 Multi-Verification evidence (Grad-CAM, cross-modal consistency, uncertainty)")
 
 
 class TextPredictRequest(BaseModel):
