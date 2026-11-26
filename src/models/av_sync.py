@@ -148,6 +148,7 @@ class AVSyncDetector:
 
         video_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         step = max(1, int(round(video_fps / max(self.sample_fps, 1.0))))
+        max_sampled_frames = 150
 
         face_cascade = self._get_face_detector()
         motion_values: List[float] = []
@@ -156,16 +157,24 @@ class AVSyncDetector:
         missed_streak = 0
         faces_detected = 0
         frame_idx = 0
+        sampled = 0
 
-        while True:
+        while sampled < max_sampled_frames:
             ret, frame = cap.read()
             if not ret:
                 break
             frame_idx += 1
             if frame_idx % step != 0:
                 continue
+            sampled += 1
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # Downscale large HD frames before HaarCascade so 1080p clips run >10x faster.
+            img_h, img_w = gray.shape[:2]
+            if img_w > 480:
+                scale = 480.0 / img_w
+                gray = cv2.resize(gray, (480, max(1, int(round(img_h * scale)))))
+
             faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
 
             if len(faces) > 0:
