@@ -245,7 +245,19 @@ def main():
         temperature=temp,
     )
     cal_metrics = eval_binary(mc_out["mean_prob"], te["y"].numpy())
-    verdicts = [abstain_verdict(float(p), float(e))[0] for p, e in zip(mc_out["mean_prob"], mc_out["entropy"])]
+    # Tune entropy threshold on validation entropy distribution to achieve ~85% target coverage (~15% UNCERTAIN)
+    va_mc = mc_dropout_predict(
+        lambda: best_cg_model(va["v"].to(device), va["a"].to(device), va["t"].to(device), c_va.to(device), va["mask"].to(device))[0],
+        best_cg_model,
+        n_samples=cfg["uncertainty"]["mc_samples"],
+        temperature=temp,
+    )
+    target_cov = float(cfg["uncertainty"].get("target_coverage", 0.85))
+    tuned_ent_thresh = float(np.quantile(va_mc["entropy"], target_cov))
+    verdicts = [
+        abstain_verdict(float(p), float(e), entropy_threshold=tuned_ent_thresh, conf_threshold=0.55)[0]
+        for p, e in zip(mc_out["mean_prob"], mc_out["entropy"])
+    ]
     abstention_rate = sum(1 for v in verdicts if v == "UNCERTAIN") / max(len(verdicts), 1)
 
     # Exp 4: Modality Ablation

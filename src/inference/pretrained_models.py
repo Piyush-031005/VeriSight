@@ -31,6 +31,8 @@ class FaceCropHelper:
 
     def _get_cascade(self):
         if self._cascade is None:
+            if not hasattr(cv2, "CascadeClassifier") or not hasattr(cv2, "data"):
+                return None
             cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
             self._cascade = cv2.CascadeClassifier(cascade_path)
         return self._cascade

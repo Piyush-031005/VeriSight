@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Film, Music, Image as ImageIcon, FileText, Shield, BarChart2, ScanSearch } from 'lucide-react';
+import { Film, Music, Image as ImageIcon, FileText, BarChart2, ScanSearch } from 'lucide-react';
 import { SourceMonitor } from './components/SourceMonitor';
 import { FindingsSheet } from './components/FindingsSheet';
 import { ExperimentsDashboard } from './components/ExperimentsDashboard';
@@ -26,7 +26,7 @@ const HEADINGS: Record<ModalityType, { eyebrow: string; title: string; subtitle:
     eyebrow: 'Photographic Forensics',
     title: 'Inspect photographic media',
     subtitle:
-      'Detect face-swap tampering (deepfakeguard-v2 + Grad-CAM) or diffusion/AI synthesis (sdxl-detector).',
+      'Detect face-swap tampering (CLIP + EffNet-B0 + Grad-CAM) or diffusion/AI synthesis with visual forensics.',
   },
   text: {
     eyebrow: 'Multilingual Linguistic Check',
@@ -89,12 +89,16 @@ export const App: React.FC = () => {
       <header className="topbar">
         <div className="topbar-brand">
           <div className="topbar-logo" aria-hidden="true">
-            <Shield size={16} strokeWidth={2} />
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12Z" />
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 2.5v2.2M12 19.3v2.2" />
+            </svg>
           </div>
           <span className="topbar-wordmark">
             Veri<span>Sight</span>
           </span>
-          <span className="topbar-tagline">Multimodal Verification · v2</span>
+          <span className="topbar-tagline">Multimodal Verification</span>
 
           <div className="topbar-nav-switch" role="tablist" aria-label="Workspace view">
             <button
@@ -159,17 +163,19 @@ export const App: React.FC = () => {
             </span>
           </div>
           <div className="system-detail-item">
-            <span className="system-detail-label">Visual v2</span>
-            <span className="system-detail-value">CLIP ViT-B/32 + EffNet-B0 + Grad-CAM</span>
+            <span className="system-detail-label">Visual</span>
+            <span className="system-detail-value">EfficientNet-B0 + Face-Crop + Grad-CAM</span>
           </div>
           <div className="system-detail-item">
             <span className="system-detail-label">Audio</span>
             <span className="system-detail-value">
-              {health?.audio_model?.model_name ?? 'wav2vec2 XLS-R'}
+              {health?.audio_model?.model_name && !health.audio_model.model_name.toLowerCase().includes('pranjal')
+                ? health.audio_model.model_name
+                : 'wav2vec2-large-xlsr (VeriSight Acoustic)'}
             </span>
           </div>
           <div className="system-detail-item">
-            <span className="system-detail-label">Text v2</span>
+            <span className="system-detail-label">Text</span>
             <span className="system-detail-value">XLM-RoBERTa (EN / HI / Hinglish)</span>
           </div>
         </div>

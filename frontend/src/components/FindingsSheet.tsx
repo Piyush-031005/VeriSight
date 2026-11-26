@@ -198,33 +198,33 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
           {modality === 'video' && (
             <>
               <div className="findings-index-row">
-                <span className="findings-index-label">Visual frames (deepfakeguard-v2)</span>
-                <span className="findings-index-value">{isLoading ? 'Sampling 8 frames & face cropping…' : 'Pending'}</span>
+                <span className="findings-index-label">Visual frames (CLIP + EffNet-B0 + Face)</span>
+                <span className="findings-index-value">{isLoading ? 'Sampling 8 frames & Grad-CAM…' : 'Pending'}</span>
               </div>
               <div className="findings-index-row">
-                <span className="findings-index-label">Audio soundtrack (wav2vec2-xlsr)</span>
+                <span className="findings-index-label">Audio soundtrack (wav2vec2 XLS-R)</span>
                 <span className="findings-index-value">{isLoading ? 'Extracting speech to 16 kHz…' : 'Pending'}</span>
               </div>
             </>
           )}
           {modality === 'audio' && (
             <div className="findings-index-row">
-              <span className="findings-index-label">Acoustic classifier (wav2vec2-xlsr)</span>
+              <span className="findings-index-label">Acoustic classifier (wav2vec2 XLS-R)</span>
               <span className="findings-index-value">{isLoading ? 'Windowing & evaluating speech…' : 'Pending'}</span>
             </div>
           )}
           {modality === 'image' && (
             <div className="findings-index-row">
               <span className="findings-index-label">
-                {imageCheckType === 'general_ai' ? 'AI-image (sdxl-detector)' : 'Face-swap (deepfakeguard-v2)'}
+                {imageCheckType === 'general_ai' ? 'AI-image hybrid (Diffusion + Visual v2)' : 'Face-swap forensic (Visual v2 + Face)'}
               </span>
-              <span className="findings-index-value">{isLoading ? 'Evaluating image pixels…' : 'Pending'}</span>
+              <span className="findings-index-value">{isLoading ? 'Evaluating image pixels & Grad-CAM…' : 'Pending'}</span>
             </div>
           )}
           {modality === 'text' && (
             <div className="findings-index-row">
-              <span className="findings-index-label">AI writing style (RoBERTa)</span>
-              <span className="findings-index-value">{isLoading ? 'Tokenizing & evaluating style…' : 'Pending'}</span>
+              <span className="findings-index-label">Multilingual style & claim check (XLM-RoBERTa)</span>
+              <span className="findings-index-value">{isLoading ? 'Tokenizing EN/HI/Hinglish text…' : 'Pending'}</span>
             </div>
           )}
         </div>
@@ -481,7 +481,7 @@ export const FindingsSheet: React.FC<FindingsSheetProps> = ({
         v2_multi_verify?.grounded_summary) && (
         <>
           <hr className="findings-rule" />
-          <div className="findings-section-label">Multi-Verification &amp; Explainability (v2)</div>
+          <div className="findings-section-label">Multi-Verification &amp; Explainability</div>
 
           {hasConsistency && (
             <div className="v2-verify-card">

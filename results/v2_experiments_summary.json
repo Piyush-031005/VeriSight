@@ -1,156 +1,156 @@
 {
   "exp1_visual_only": {
-    "accuracy": 0.7167,
-    "precision": 0.9091,
-    "recall": 0.3846,
-    "f1": 0.5405,
-    "roc_auc": 0.8778,
-    "ece": 0.1476
+    "accuracy": 0.5833,
+    "precision": 0.6,
+    "recall": 0.1154,
+    "f1": 0.1935,
+    "roc_auc": 0.638,
+    "ece": 0.3687
   },
   "exp2_fusion_comparison": {
     "concat": {
-      "f1_mean": 0.8747,
-      "f1_std": 0.0191,
-      "auc_mean": 0.9627,
-      "ece_mean": 0.0957,
+      "f1_mean": 0.4571,
+      "f1_std": 0.0,
+      "auc_mean": 0.8318,
+      "ece_mean": 0.3237,
       "per_seed": [
         {
-          "accuracy": 0.9,
-          "precision": 0.9545,
-          "recall": 0.8077,
-          "f1": 0.875,
-          "roc_auc": 0.957,
-          "ece": 0.0955
+          "accuracy": 0.6833,
+          "precision": 0.8889,
+          "recall": 0.3077,
+          "f1": 0.4571,
+          "roc_auc": 0.8122,
+          "ece": 0.3236
         },
         {
-          "accuracy": 0.9167,
-          "precision": 0.9565,
-          "recall": 0.8462,
-          "f1": 0.898,
-          "roc_auc": 0.9672,
-          "ece": 0.0898
+          "accuracy": 0.6833,
+          "precision": 0.8889,
+          "recall": 0.3077,
+          "f1": 0.4571,
+          "roc_auc": 0.8518,
+          "ece": 0.3259
         },
         {
-          "accuracy": 0.8833,
-          "precision": 0.9524,
-          "recall": 0.7692,
-          "f1": 0.8511,
-          "roc_auc": 0.9638,
-          "ece": 0.1019
+          "accuracy": 0.6833,
+          "precision": 0.8889,
+          "recall": 0.3077,
+          "f1": 0.4571,
+          "roc_auc": 0.8314,
+          "ece": 0.3215
         }
       ]
     },
     "cross_attention": {
-      "f1_mean": 0.8448,
-      "f1_std": 0.0134,
-      "auc_mean": 0.9533,
-      "ece_mean": 0.1197,
+      "f1_mean": 0.4402,
+      "f1_std": 0.0569,
+      "auc_mean": 0.836,
+      "ece_mean": 0.326,
       "per_seed": [
         {
-          "accuracy": 0.8833,
-          "precision": 0.9524,
-          "recall": 0.7692,
-          "f1": 0.8511,
-          "roc_auc": 0.9548,
-          "ece": 0.1229
+          "accuracy": 0.6833,
+          "precision": 0.8889,
+          "recall": 0.3077,
+          "f1": 0.4571,
+          "roc_auc": 0.8264,
+          "ece": 0.3243
         },
         {
-          "accuracy": 0.8833,
-          "precision": 0.913,
-          "recall": 0.8077,
-          "f1": 0.8571,
-          "roc_auc": 0.9491,
-          "ece": 0.1131
+          "accuracy": 0.65,
+          "precision": 0.8571,
+          "recall": 0.2308,
+          "f1": 0.3636,
+          "roc_auc": 0.8331,
+          "ece": 0.345
         },
         {
-          "accuracy": 0.8667,
-          "precision": 0.95,
-          "recall": 0.7308,
-          "f1": 0.8261,
-          "roc_auc": 0.9559,
-          "ece": 0.1232
+          "accuracy": 0.7,
+          "precision": 0.9,
+          "recall": 0.3462,
+          "f1": 0.5,
+          "roc_auc": 0.8484,
+          "ece": 0.3087
         }
       ]
     },
     "consistency_gated": {
-      "f1_mean": 0.898,
-      "f1_std": 0.0,
-      "auc_mean": 0.9774,
-      "ece_mean": 0.0794,
+      "f1_mean": 0.7318,
+      "f1_std": 0.0578,
+      "auc_mean": 0.9359,
+      "ece_mean": 0.18,
       "per_seed": [
         {
-          "accuracy": 0.9167,
-          "precision": 0.9565,
-          "recall": 0.8462,
-          "f1": 0.898,
-          "roc_auc": 0.9796,
-          "ece": 0.0806
+          "accuracy": 0.8333,
+          "precision": 0.9444,
+          "recall": 0.6538,
+          "f1": 0.7727,
+          "roc_auc": 0.9423,
+          "ece": 0.1658
         },
         {
-          "accuracy": 0.9167,
-          "precision": 0.9565,
-          "recall": 0.8462,
-          "f1": 0.898,
-          "roc_auc": 0.983,
-          "ece": 0.0796
+          "accuracy": 0.7667,
+          "precision": 0.9286,
+          "recall": 0.5,
+          "f1": 0.65,
+          "roc_auc": 0.9265,
+          "ece": 0.2209
         },
         {
-          "accuracy": 0.9167,
-          "precision": 0.9565,
-          "recall": 0.8462,
-          "f1": 0.898,
-          "roc_auc": 0.9695,
-          "ece": 0.078
+          "accuracy": 0.8333,
+          "precision": 0.9444,
+          "recall": 0.6538,
+          "f1": 0.7727,
+          "roc_auc": 0.9389,
+          "ece": 0.1534
         }
       ]
     }
   },
   "calibration": {
-    "temperature": 3.0278,
+    "temperature": 1.6069,
     "calibrated_metrics": {
-      "accuracy": 0.9167,
-      "precision": 0.9565,
-      "recall": 0.8462,
-      "f1": 0.898,
-      "roc_auc": 0.9581,
-      "ece": 0.1084
+      "accuracy": 0.8167,
+      "precision": 0.9412,
+      "recall": 0.6154,
+      "f1": 0.7442,
+      "roc_auc": 0.9152,
+      "ece": 0.1382
     },
-    "abstention_rate": 0.9833
+    "abstention_rate": 0.1833
   },
   "exp4_modality_ablation": {
     "all_present": {
-      "accuracy": 0.9167,
-      "precision": 0.9565,
-      "recall": 0.8462,
-      "f1": 0.898,
-      "roc_auc": 0.9695,
-      "ece": 0.078
+      "accuracy": 0.8333,
+      "precision": 0.9444,
+      "recall": 0.6538,
+      "f1": 0.7727,
+      "roc_auc": 0.9389,
+      "ece": 0.1534
     },
     "drop_visual": {
-      "accuracy": 0.7167,
-      "precision": 0.6098,
-      "recall": 0.9615,
-      "f1": 0.7463,
-      "roc_auc": 0.9412,
-      "ece": 0.0994
+      "accuracy": 0.8833,
+      "precision": 0.913,
+      "recall": 0.8077,
+      "f1": 0.8571,
+      "roc_auc": 0.9457,
+      "ece": 0.1231
     },
     "drop_audio": {
-      "accuracy": 0.8833,
-      "precision": 0.9524,
-      "recall": 0.7692,
-      "f1": 0.8511,
-      "roc_auc": 0.9502,
-      "ece": 0.1188
+      "accuracy": 0.7667,
+      "precision": 0.9286,
+      "recall": 0.5,
+      "f1": 0.65,
+      "roc_auc": 0.8812,
+      "ece": 0.2286
     },
     "drop_text": {
-      "accuracy": 0.8833,
-      "precision": 0.9524,
-      "recall": 0.7692,
-      "f1": 0.8511,
-      "roc_auc": 0.9672,
-      "ece": 0.1029
+      "accuracy": 0.8167,
+      "precision": 0.9412,
+      "recall": 0.6154,
+      "f1": 0.7442,
+      "roc_auc": 0.845,
+      "ece": 0.1888
     }
   },
-  "exp6_deletion_faithfulness_conf_drop": 0.1923,
-  "elapsed_sec": 15.7
+  "exp6_deletion_faithfulness_conf_drop": 0.0907,
+  "elapsed_sec": 14.67
 }

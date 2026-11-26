@@ -212,13 +212,11 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
 
       {/* Monitor title bar */}
       <div className="monitor-header">
-        <div className="monitor-header-dots">
-          <span className="monitor-dot monitor-dot--red" />
-          <span className="monitor-dot monitor-dot--yellow" />
-          <span className="monitor-dot monitor-dot--green" />
-        </div>
+        <span className="monitor-bar-tag" style={{ fontSize: 10, letterSpacing: '0.1em', color: 'rgba(245, 218, 191, 0.55)', fontFamily: 'var(--font-mono)' }}>
+          VERISIGHT LAB
+        </span>
         <span className="monitor-label">{getMonitorLabel()}</span>
-        <div style={{ width: 48 }} />
+        <div style={{ width: 88 }} />
       </div>
 
       {/* Main viewport */}
@@ -367,16 +365,16 @@ export const SourceMonitor: React.FC<SourceMonitorProps> = ({
               className={`check-type-btn${imageCheckType === 'face_swap' ? ' check-type-btn--active' : ''}`}
               onClick={() => onImageCheckTypeChange('face_swap')}
             >
-              <div className="check-type-btn-title">Face-Swap Detection</div>
-              <div className="check-type-btn-sub">deepfakeguard-v2 (ONNX)</div>
+              <div className="check-type-btn-title">Face-Swap &amp; Deepfake</div>
+              <div className="check-type-btn-sub">EffNet-B0 + Face-Crop Forensic</div>
             </button>
             <button
               type="button"
               className={`check-type-btn${imageCheckType === 'general_ai' ? ' check-type-btn--active' : ''}`}
               onClick={() => onImageCheckTypeChange('general_ai')}
             >
-              <div className="check-type-btn-title">General AI-Image</div>
-              <div className="check-type-btn-sub">sdxl-detector</div>
+              <div className="check-type-btn-title">AI-Image Check</div>
+              <div className="check-type-btn-sub">Diffusion + Spatial Hybrid</div>
             </button>
           </div>
         </div>

@@ -62,9 +62,17 @@ class VisualV2Detector(nn.Module):
             clip_dim = 0
             if self.use_clip:
                 try:
-                    from transformers import CLIPVisionModel
+                    from transformers import CLIPModel, CLIPVisionConfig, CLIPVisionModel
 
-                    self.clip_vision = CLIPVisionModel.from_pretrained(clip_name)
+                    try:
+                        clip_cfg = CLIPVisionConfig.from_pretrained(clip_name, local_files_only=True)
+                        self.clip_vision = CLIPVisionModel.from_pretrained(clip_name, config=clip_cfg, local_files_only=True)
+                    except Exception:
+                        try:
+                            clip_cfg = CLIPVisionConfig.from_pretrained(clip_name)
+                            self.clip_vision = CLIPVisionModel.from_pretrained(clip_name, config=clip_cfg)
+                        except Exception:
+                            self.clip_vision = CLIPModel.from_pretrained(clip_name).vision_model
                     clip_dim = self.clip_vision.config.hidden_size
                     if freeze_backbones:
                         for p in self.clip_vision.parameters():

@@ -83,12 +83,12 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
-    logger.info(f"Loading VisualV2Detector (CLIP: {v_cfg['clip_backbone']} + {v_cfg['artifact_backbone']})...")
+    logger.info(f"Loading VisualV2Detector ({v_cfg['artifact_backbone']} spatial artifact branch; CLIP disabled for cross-identity generalization)...")
     model = VisualV2Detector(
         embedding_dim=cfg["models_v2"]["embedding_dim"],
         dropout=cfg["models_v2"]["dropout"],
         freeze_backbones=v_cfg["freeze_backbones"],
-        use_clip=True,
+        use_clip=False,
         clip_name=v_cfg["clip_backbone"],
         artifact_backbone=v_cfg["artifact_backbone"],
         pretrained=True,
@@ -101,20 +101,42 @@ def main():
     criterion = nn.BCEWithLogitsLoss()
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
+    @torch.no_grad()
+    def extract_split_features(loader):
+        model.eval()
+        feats_list, labels_list = [], []
+        for x, y in loader:
+            b, t, c, h, w = x.shape
+            f_flat, _ = model._encode_frames(x.to(device).view(b * t, c, h, w))
+            feats_list.append(f_flat.view(b, t, -1).cpu())
+            labels_list.append(y.cpu())
+        return torch.cat(feats_list, dim=0), torch.cat(labels_list, dim=0)
+
+    logger.info("Extracting frozen CLIP + EffNet-B0 features once across train/val/test...")
+    tr_feats, tr_labels = extract_split_features(train_loader)
+    va_feats, va_labels = extract_split_features(val_loader)
+    te_feats, te_labels = extract_split_features(DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)) if test_ds is not None else (None, None)
+
+    feat_tr_loader = DataLoader(torch.utils.data.TensorDataset(tr_feats, tr_labels), batch_size=args.batch_size, shuffle=True)
+    feat_va_loader = DataLoader(torch.utils.data.TensorDataset(va_feats, va_labels), batch_size=args.batch_size, shuffle=False)
+
     ckpt_path = ROOT / v_cfg["checkpoint"]
     best_val_loss = float("inf")
     t0 = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
         ep_t0 = time.perf_counter()
-        model.train()
+        model.adapter.train()
+        model.classifier.train()
         tr_loss = 0.0
         n_tr = 0
-        for x, y in train_loader:
-            x, y = x.to(device), y.to(device)
+        for f_bt, y in feat_tr_loader:
+            f_bt, y = f_bt.to(device), y.to(device)
+            b, t, d = f_bt.shape
             optimizer.zero_grad()
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
-                logits, _ = model(x)
+                emb_flat = model.adapter(f_bt.view(b * t, d))
+                logits = model.classifier(emb_flat).squeeze(-1).view(b, t).mean(dim=1)
                 loss = criterion(logits, y)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -127,10 +149,12 @@ def main():
         n_val = 0
         all_probs, all_labels = [], []
         with torch.no_grad():
-            for x, y in val_loader:
-                x, y = x.to(device), y.to(device)
+            for f_bt, y in feat_va_loader:
+                f_bt, y = f_bt.to(device), y.to(device)
+                b, t, d = f_bt.shape
                 with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
-                    logits, _ = model(x)
+                    emb_flat = model.adapter(f_bt.view(b * t, d))
+                    logits = model.classifier(emb_flat).squeeze(-1).view(b, t).mean(dim=1)
                     loss = criterion(logits, y)
                 val_loss += loss.item() * len(y)
                 n_val += len(y)
@@ -148,7 +172,7 @@ def main():
             val_auc = 0.0
 
         logger.info(
-            f"Epoch {epoch:02d}/{epochs:02d} ({time.perf_counter() - ep_t0:.1f}s) | "
+            f"Epoch {epoch:02d}/{epochs:02d} ({time.perf_counter() - ep_t0:.2f}s) | "
             f"Train Loss: {tr_loss:.4f} | Val Loss: {val_loss:.4f} | "
             f"Val Acc: {val_acc:.4f} | Val F1: {val_f1:.4f} | Val AUC: {val_auc:.4f}"
         )
@@ -158,22 +182,30 @@ def main():
             save_adapter_state(model, ckpt_path)
             logger.info(f"  -> Saved best adapter checkpoint: {ckpt_path} ({ckpt_path.stat().st_size / 1e6:.2f} MB)")
 
+    # Reload best weights before exporting cached embeddings
+    best_st = torch.load(ckpt_path, map_location=device, weights_only=True)
+    model.adapter.load_state_dict(best_st["adapter"])
+    model.classifier.load_state_dict(best_st["classifier"])
+
     # Export cached embeddings for Fusion + Exp 1-6
     cache_path = ROOT / cfg["paths"]["cache_dir"] / "visual_l1_embeddings.npz"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     splits_out = {}
     model.eval()
     with torch.no_grad():
-        for name, ds in [("train", train_ds), ("val", val_ds), ("test", test_ds)]:
-            if ds is None or len(ds) == 0:
+        for name, f_split, y_split in [("train", tr_feats, tr_labels), ("val", va_feats, va_labels), ("test", te_feats, te_labels)]:
+            if f_split is None or len(f_split) == 0:
                 continue
-            loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
             embs, scores, labels = [], [], []
-            for x, y in loader:
-                logits, emb = model(x.to(device))
+            for start in range(0, len(f_split), args.batch_size):
+                f_bt = f_split[start:start + args.batch_size].to(device)
+                b, t, d = f_bt.shape
+                emb_flat = model.adapter(f_bt.view(b * t, d))
+                logits = model.classifier(emb_flat).squeeze(-1).view(b, t).mean(dim=1)
+                emb = torch.nn.functional.normalize(emb_flat.view(b, t, model.embedding_dim).mean(dim=1), p=2, dim=-1)
                 embs.append(emb.cpu().numpy())
                 scores.extend(torch.sigmoid(logits).cpu().numpy().tolist())
-                labels.extend(y.numpy().tolist())
+                labels.extend(y_split[start:start + args.batch_size].numpy().tolist())
             splits_out[f"{name}_embeddings"] = np.concatenate(embs, axis=0)
             splits_out[f"{name}_scores"] = np.array(scores, dtype=np.float32)
             splits_out[f"{name}_labels"] = np.array(labels, dtype=np.float32)

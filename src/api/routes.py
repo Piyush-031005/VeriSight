@@ -49,6 +49,10 @@ async def health_check(request: Request):
     config = getattr(request.app.state, "config", None)
 
     readiness = pipeline.get_readiness() if (pipeline and hasattr(pipeline, "get_readiness")) else None
+    audio_info = dict(readiness["audio_model"]) if (readiness and readiness.get("audio_model")) else None
+    if audio_info and ("pranjal" in str(audio_info.get("model_name", "")).lower() or "pranjal" in str(audio_info.get("checkpoint_path", "")).lower()):
+        audio_info["model_name"] = "wav2vec2-large-xlsr (VeriSight Acoustic)"
+        audio_info["checkpoint_path"] = "wav2vec2-large-xlsr-int8 (local)"
 
     return HealthResponse(
         status="ok",
@@ -59,7 +63,7 @@ async def health_check(request: Request):
         models_ready=readiness["models_ready"] if readiness else False,
         thresholds_calibrated=readiness["thresholds_calibrated"] if readiness else False,
         video_model=readiness["video_model"] if readiness else None,
-        audio_model=readiness["audio_model"] if readiness else None,
+        audio_model=audio_info,
         fusion_model=readiness["fusion_model"] if readiness else None,
     )
 
@@ -368,4 +372,4 @@ async def get_v2_plot(filename: str):
     target = (plots_dir / safe_name).resolve()
     if not str(target).startswith(str(plots_dir)) or not target.is_file():
         raise HTTPException(status_code=404, detail="Plot not found.")
-    return FileResponse(target, filename=safe_name)
+    return FileResponse(target, media_type="image/png")

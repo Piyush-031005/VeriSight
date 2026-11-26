@@ -61,7 +61,7 @@ export const ExperimentsDashboard: React.FC = () => {
       <div className="exp-header">
         <div>
           <div className="workspace-eyebrow">Research Evaluation &amp; Model Registry</div>
-          <h1 className="workspace-title" style={{ fontSize: 30 }}>VeriSight v2 Benchmarks</h1>
+          <h1 className="workspace-title" style={{ fontSize: 30 }}>VeriSight Benchmarks</h1>
           <p className="workspace-subtitle">
             Live metrics from trained RTX 4050 adapter heads, 3-seed fusion comparison, cross-lingual Hindi/Hinglish evaluation, and modality ablation.
           </p>

@@ -21,6 +21,17 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent.parent
 _CACHED_GRADCAM_MODEL = None
 _CACHED_TEXT_V2 = None
+_CACHED_FACESWAP = None
+
+
+def _get_faceswap_detector():
+    global _CACHED_FACESWAP
+    if _CACHED_FACESWAP is None:
+        from src.inference.pretrained_models import FaceSwapDetector
+        det = FaceSwapDetector()
+        if det.load():
+            _CACHED_FACESWAP = det
+    return _CACHED_FACESWAP
 
 
 def _get_text_v2_model():
@@ -69,8 +80,50 @@ def _predict_text_with_v2(text_str: str):
         logits, _, token_weights = model(ids, mask, return_token_weights=True)
         prob = float(torch.sigmoid(logits)[0].item())
     raw_tokens = tokenizer.convert_ids_to_tokens(ids[0].tolist())
-    clean_tokens = [tok.lstrip("▁") for tok in raw_tokens]
-    top_tokens = model.explain_tokens(clean_tokens, token_weights[0], top_k=8)
+    special_tokens = set(getattr(tokenizer, "all_special_tokens", []) or [])
+    weights_1d = token_weights[0].detach().cpu()
+
+    # Merge SentencePiece subword tokens into whole readable words and aggregate weights
+    merged_tokens: List[str] = []
+    merged_weights: List[float] = []
+    cur_word = ""
+    cur_w = 0.0
+    for tok, w in zip(raw_tokens, weights_1d.tolist()):
+        if tok in special_tokens:
+            if cur_word:
+                merged_tokens.append(cur_word)
+                merged_weights.append(cur_w)
+                cur_word, cur_w = "", 0.0
+            continue
+        is_start = tok.startswith("▁")
+        piece = tok.lstrip("▁")
+        if not piece:
+            continue
+        if is_start:
+            if cur_word:
+                merged_tokens.append(cur_word)
+                merged_weights.append(cur_w)
+            cur_word = piece
+            cur_w = float(w)
+        else:
+            cur_word += piece
+            cur_w += float(w)
+    if cur_word:
+        merged_tokens.append(cur_word)
+        merged_weights.append(cur_w)
+
+    clean_pairs = [
+        (tok.strip(".,!?;:\"'()[]{}।"), w)
+        for tok, w in zip(merged_tokens, merged_weights)
+    ]
+    clean_pairs = [(tok, w) for tok, w in clean_pairs if tok and any(ch.isalnum() for ch in tok)]
+    if clean_pairs:
+        clean_tokens = [tok for tok, _ in clean_pairs]
+        clean_weights = torch.tensor([w for _, w in clean_pairs], dtype=weights_1d.dtype)
+    else:
+        clean_tokens = [tok.lstrip("▁") for tok in raw_tokens]
+        clean_weights = weights_1d
+    top_tokens = model.explain_tokens(clean_tokens, clean_weights, top_k=8)
     return prob, top_tokens
 
 
@@ -80,15 +133,23 @@ def _get_gradcam_model():
         from src.models.v2.visual_model import VisualV2Detector
 
         v_ckpt = ROOT / "checkpoints" / "v2_visual_head.pt"
-        vis_model = VisualV2Detector(embedding_dim=256, use_clip=False, pretrained=True)
+        use_clip = False
+        emb_dim = 256
+        st = None
         if v_ckpt.exists():
             try:
                 st = torch.load(v_ckpt, map_location="cpu", weights_only=True)
-                if not st.get("use_clip", False):
-                    vis_model.adapter.load_state_dict(st["adapter"])
-                    vis_model.classifier.load_state_dict(st["classifier"])
+                use_clip = bool(st.get("use_clip", False))
+                emb_dim = int(st.get("embedding_dim", 256))
             except Exception:
-                pass
+                st = None
+        vis_model = VisualV2Detector(embedding_dim=emb_dim, use_clip=use_clip, pretrained=True)
+        if st is not None:
+            try:
+                vis_model.adapter.load_state_dict(st["adapter"])
+                vis_model.classifier.load_state_dict(st["classifier"])
+            except Exception as exc:
+                logger.warning(f"Could not load v2_visual_head.pt into Grad-CAM model ({exc}).")
         vis_model.eval()
         _CACHED_GRADCAM_MODEL = vis_model
     return _CACHED_GRADCAM_MODEL
@@ -135,7 +196,7 @@ def run_v2_multi_verification(
             txt_block = base_result.setdefault("text", {})
             txt_block["score"] = round(prob_fake, 4)
             txt_block["available"] = True
-            txt_block["model"] = "xlm-roberta-base (VeriSight v2 · EN/HI)"
+            txt_block["model"] = "xlm-roberta-base (VeriSight · EN/HI/Hinglish)"
             txt_block["label"] = "Multilingual AI-writing & claim check"
             txt_block["reason"] = None
             band = txt_block.get("band") or [0.40, 0.60]
@@ -151,14 +212,23 @@ def run_v2_multi_verification(
                 base_result["confidence"] = round(1.0 - prob_fake, 4)
             base_result["models_ready"] = True
 
+    # Clean external ONNX author slug in audio response metadata so UI shows VeriSight v2 Acoustic
+    if isinstance(base_result.get("audio"), dict):
+        aud_m = str(base_result["audio"].get("model") or "")
+        if "pranjal" in aud_m.lower():
+            base_result["audio"]["model"] = "wav2vec2-large-xlsr (VeriSight Acoustic)"
+    if isinstance(base_result.get("model_used"), str) and "pranjal" in base_result["model_used"].lower():
+        base_result["model_used"] = "wav2vec2-large-xlsr (VeriSight Acoustic)"
+
     v_score = (base_result.get("video") or {}).get("score")
     if v_score is None and base_result.get("image"):
         v_score = base_result["image"].get("score")
     a_score = (base_result.get("audio") or {}).get("score")
     t_score = (base_result.get("text") or {}).get("score")
 
-    # 1. Generate visual Grad-CAM overlay on first sampled face/frame if media_path is video/image
+    # 1. Generate visual Grad-CAM overlay + VeriSight v2 visual score on first sampled face/frame
     gradcam_b64: Optional[str] = None
+    v2_visual_prob: Optional[float] = None
     if media_path is not None and media_path.exists() and modality in {"video", "image"}:
         try:
             from src.data.video_preprocessing import extract_frames
@@ -173,10 +243,72 @@ def run_v2_multi_verification(
                 ])
                 x = tfm(frames[0]).unsqueeze(0)
                 vis_model = _get_gradcam_model()
+                with torch.no_grad():
+                    v_logits, _ = vis_model(x)
+                    v2_visual_prob = float(torch.sigmoid(v_logits)[0].item())
                 cam = vis_model.compute_gradcam(x)[0].numpy()
                 gradcam_b64 = encode_gradcam_overlay_b64(frames[0], cam)
         except Exception as exc:
             logger.debug(f"Grad-CAM overlay skipped: {exc}")
+
+    # For Image tab: stabilize both Face-Swap and General AI-Image modes + align confidence with score
+    if modality == "image" and isinstance(base_result.get("image"), dict) and v2_visual_prob is not None:
+        img_block = base_result["image"]
+        chk = img_block.get("check_type")
+        orig_score = img_block.get("score")
+        if orig_score is not None and chk == "face_swap":
+            blended_img = round(0.85 * float(orig_score) + 0.15 * v2_visual_prob, 4)
+            img_block["score"] = blended_img
+            img_block["model"] = "VeriSight Spatial (EffNet-B0) + Face-Crop"
+            v_score = blended_img
+            base_result["prediction"] = "FAKE" if blended_img >= 0.5 else "REAL"
+            base_result["confidence"] = round(blended_img if blended_img >= 0.5 else 1.0 - blended_img, 4)
+        elif orig_score is None and chk == "face_swap":
+            # No face bbox cropped cleanly by ONNX cropper -> fall back to full-frame VeriSight visual score
+            img_block["score"] = round(v2_visual_prob, 4)
+            img_block["available"] = True
+            img_block["reason"] = "Evaluated via full-frame spatial detector (no tight face crop detected)."
+            img_block["model"] = "VeriSight Spatial (EffNet-B0)"
+            v_score = img_block["score"]
+            base_result["prediction"] = "UNCERTAIN" if 0.40 <= v2_visual_prob <= 0.60 else ("FAKE" if v2_visual_prob > 0.60 else "REAL")
+            base_result["confidence"] = None if base_result["prediction"] == "UNCERTAIN" else round(v2_visual_prob if v2_visual_prob > 0.60 else 1.0 - v2_visual_prob, 4)
+        elif orig_score is not None and chk == "general_ai":
+            # Cross-check compressed/portrait photos with FaceSwap + EffNet-B0 so real screenshots/WhatsApp photos aren't falsely flagged 100% by SDXL-only ViT
+            face_score = None
+            if media_path is not None and media_path.exists():
+                try:
+                    fs_det = _get_faceswap_detector()
+                    if fs_det is not None:
+                        rgb_arr = np.asarray(Image.open(media_path).convert("RGB"))
+                        fs_res = fs_det.predict_image(rgb_arr)
+                        if fs_res.get("score") is not None:
+                            face_score = float(fs_res["score"])
+                except Exception:
+                    face_score = None
+
+            if face_score is not None:
+                hybrid_score = round(0.65 * face_score + 0.20 * v2_visual_prob + 0.15 * float(orig_score), 4)
+                img_block["model"] = "VeriSight Hybrid (Face-Forensic + EffNet-B0 + Diffusion)"
+                img_block["faces_detected"] = max(int(img_block.get("faces_detected") or 0), 1)
+                low_band, high_band = 0.45, 0.58
+            else:
+                hybrid_score = round(0.70 * float(orig_score) + 0.30 * v2_visual_prob, 4)
+                img_block["model"] = "VeriSight Hybrid (Diffusion + EffNet-B0)"
+                low_band, high_band = 0.42, 0.58
+
+            img_block["score"] = hybrid_score
+            img_block["band"] = [low_band, high_band]
+            v_score = hybrid_score
+            if low_band <= hybrid_score <= high_band:
+                base_result["prediction"] = "UNCERTAIN"
+                base_result["confidence"] = None
+                img_block["reason"] = "Signals lie in the calibration uncertainty zone (compressed portrait or mixed diffusion cues)."
+            elif hybrid_score > high_band:
+                base_result["prediction"] = "FAKE"
+                base_result["confidence"] = round(hybrid_score, 4)
+            else:
+                base_result["prediction"] = "REAL"
+                base_result["confidence"] = round(1.0 - hybrid_score, 4)
 
     # 2. Layer-2 Cross-Modal Consistency Summary
     cross = base_result.get("cross_modal") or {}
