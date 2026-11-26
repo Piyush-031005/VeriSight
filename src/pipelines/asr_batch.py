@@ -25,14 +25,34 @@ ALL_EXTS = AUDIO_EXTS | VIDEO_EXTS
 _EMBED_MODEL_CACHE: Dict[str, object] = {}
 
 
+def _register_torch_cuda_dlls() -> None:
+    """Expose torch/lib cuBLAS/cuDNN DLLs so ctranslate2 finds cublas64_12.dll on Windows."""
+    import os
+    try:
+        import torch
+        torch_lib = Path(torch.__file__).resolve().parent / "lib"
+        if torch_lib.is_dir():
+            if hasattr(os, "add_dll_directory"):
+                os.add_dll_directory(str(torch_lib))
+            os.environ["PATH"] = f"{torch_lib}{os.pathsep}{os.environ.get('PATH', '')}"
+    except Exception:
+        pass
+
+
 def _load_whisper_model(model_size: str = "base", compute_type: str = "float16", device: str = "cuda"):
-    """Load faster-whisper model, falling back to CPU int8 on CUDA/VRAM failure."""
+    """Load faster-whisper model and probe runtime DLLs, falling back to CPU int8 if needed."""
+    import numpy as np
+    _register_torch_cuda_dlls()
     try:
         from faster_whisper import WhisperModel
         logger.info(f"Loading faster-whisper '{model_size}' on {device} ({compute_type}) ...")
-        return WhisperModel(model_size, device=device, compute_type=compute_type)
+        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        if device == "cuda":
+            # Probe 0.2s silent buffer so missing cuBLAS/cuDNN DLLs are caught immediately.
+            list(model.transcribe(np.zeros(3200, dtype=np.float32), beam_size=1)[0])
+        return model
     except Exception as exc:
-        logger.warning(f"faster-whisper load failed ({exc}). Trying CPU int8 fallback ...")
+        logger.warning(f"faster-whisper CUDA load failed ({exc}). Trying CPU int8 fallback ...")
         try:
             from faster_whisper import WhisperModel
             return WhisperModel(model_size, device="cpu", compute_type="int8")

@@ -6,13 +6,13 @@ USAGE:
   # Verify setup first (dry run, no actual training):
   python scripts/train_audio_xlsr_v2.py --config configs/v2_cuda.yaml --dry_run
 
-  # Full training (run after dataset download & confirmation):
+  # Full training (caches frozen backbone hidden states once -> 10 epochs in <1 min):
   python scripts/train_audio_xlsr_v2.py --config configs/v2_cuda.yaml
 
 OUTPUTS:
   checkpoints/v2_audio_xlsr_head.pt       — adapter head only (<25 MB, safe for GitHub)
-  data/cache/audio_l2_embeddings.npz      — dev/eval embeddings + scores + temporal saliency
-  results/audio_eval_l2.json              — in-domain + OOD evaluation metrics
+  data/cache/audio_l2_embeddings.npz      — balanced dev/eval embeddings + scores + saliency (<10 MB)
+  results/audio_eval_l2.json              — full in-domain (71k eval) + OOD evaluation metrics
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -139,10 +140,9 @@ class ASVspoofDataset(Dataset):
         if not protocol_path.exists():
             raise FileNotFoundError(
                 f"Protocol file not found: {protocol_path}\n"
-                f"Download ASVspoof 2019 LA from: https://datashare.ed.ac.uk/handle/10283/3336"
+                f"Run: python scripts/download_datasets_l2.py --dataset asvspoof"
             )
 
-        # Index audio files once in O(N) instead of calling stat() 25k+ times.
         file_index: Dict[str, Path] = {}
         if audio_dir.exists():
             for p in audio_dir.iterdir():
@@ -162,7 +162,6 @@ class ASVspoofDataset(Dataset):
                     samples.append({"path": fpath, "label": label, "id": clip_id})
 
         if self.max_samples_limit and len(samples) > self.max_samples_limit:
-            # Stratified cap so both bonafide and spoof remain represented.
             real = [s for s in samples if s["label"] == 0]
             fake = [s for s in samples if s["label"] == 1]
             half = self.max_samples_limit // 2
@@ -225,6 +224,22 @@ class FolderAudioDataset(Dataset):
         return waveform, torch.tensor(item["label"], dtype=torch.float32), item["id"]
 
 
+class CachedHiddenStateDataset(Dataset):
+    """Memory-mapped frozen wav2vec2 hidden states for ultra-fast head training."""
+
+    def __init__(self, memmap_path: Path, shape: Tuple[int, int, int], labels: List[int], ids: List[str]):
+        self.feats = np.memmap(str(memmap_path), dtype="float16", mode="r", shape=shape)
+        self.labels = np.array(labels, dtype=np.float32)
+        self.ids = ids
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+    def __getitem__(self, idx: int):
+        x = torch.from_numpy(np.array(self.feats[idx], dtype=np.float32))
+        return x, torch.tensor(self.labels[idx], dtype=torch.float32), self.ids[idx]
+
+
 def _make_amp_helpers(amp_enabled: bool):
     if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
         scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
@@ -236,15 +251,90 @@ def _make_amp_helpers(amp_enabled: bool):
     return scaler, autocast_ctx
 
 
-def train_one_epoch(model, loader, optimizer, criterion, device, scaler, autocast_ctx, epoch: int) -> Dict:
-    model.train()
-    total_loss, correct, total = 0.0, 0, 0
-    for step, (waveforms, labels, _) in enumerate(loader, 1):
+def head_forward(model, seq: torch.Tensor, return_saliency: bool = False):
+    """Exact head computation matching AudioV2Detector.forward() from cached backbone hidden states."""
+    attn_scores = model.temporal_attn(seq).squeeze(-1)
+    attn_weights = F.softmax(attn_scores, dim=-1)
+    pooled = torch.sum(seq * attn_weights.unsqueeze(-1), dim=1)
+    emb = F.normalize(model.adapter(pooled), p=2, dim=-1)
+    logits = model.classifier(emb).squeeze(-1)
+    if return_saliency:
+        return logits, emb, attn_weights
+    return logits, emb
+
+
+@torch.no_grad()
+def build_or_load_backbone_cache(
+    model,
+    dataset: ASVspoofDataset,
+    split_name: str,
+    cache_dir: Path,
+    batch_size: int,
+    num_workers: int,
+    device: torch.device,
+    autocast_ctx,
+) -> CachedHiddenStateDataset:
+    """Extract frozen backbone hidden states once into float16 memmap."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    safe_backbone = model.backbone_name.replace("/", "__")
+    dat_path = cache_dir / f"{split_name}_{safe_backbone}_{len(dataset)}.dat"
+    meta_path = cache_dir / f"{split_name}_{safe_backbone}_{len(dataset)}.json"
+
+    labels = [int(s["label"]) for s in dataset.samples]
+    ids = [s["id"] for s in dataset.samples]
+
+    if dat_path.exists() and meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if meta.get("complete") and meta.get("n") == len(dataset):
+            logger.info(f"Reusing cached {split_name} backbone features: {dat_path} (shape={meta['shape']})")
+            return CachedHiddenStateDataset(dat_path, tuple(meta["shape"]), labels, ids)
+
+    model.backbone.eval()
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=(device.type == "cuda"))
+
+    # Probe exact output shape from first batch.
+    first_wav, _, _ = next(iter(loader))
+    with autocast_ctx():
+        first_seq = model.backbone(first_wav.to(device)).last_hidden_state
+    _, t_frames, hidden_dim = first_seq.shape
+    shape = (len(dataset), int(t_frames), int(hidden_dim))
+
+    logger.info(f"Caching frozen backbone features for [{split_name}] -> {dat_path} (shape={shape}, float16) ...")
+    mmap = np.memmap(str(dat_path), dtype="float16", mode="w+", shape=shape)
+
+    offset = 0
+    t0 = time.time()
+    for step, (waveforms, _, _) in enumerate(loader, 1):
         waveforms = waveforms.to(device, non_blocking=True)
+        with autocast_ctx():
+            seq = model.backbone(waveforms).last_hidden_state
+        arr = seq.detach().to(torch.float16).cpu().numpy()
+        bsz = arr.shape[0]
+        mmap[offset: offset + bsz] = arr
+        offset += bsz
+        if step % 200 == 0 or step == len(loader):
+            elapsed = time.time() - t0
+            rate = offset / max(elapsed, 1e-6)
+            eta = (len(dataset) - offset) / max(rate, 1e-6)
+            logger.info(f"  Cache [{split_name}] {offset}/{len(dataset)} ({rate:.1f} clips/s, ETA {eta/60:.1f} min)")
+
+    mmap.flush()
+    del mmap
+    meta_path.write_text(json.dumps({"complete": True, "n": len(dataset), "shape": list(shape)}), encoding="utf-8")
+    return CachedHiddenStateDataset(dat_path, shape, labels, ids)
+
+
+def train_one_epoch(model, loader, optimizer, criterion, device, scaler, autocast_ctx, epoch: int, cached_inputs: bool) -> Dict:
+    model.train()
+    if hasattr(model, "backbone"):
+        model.backbone.eval()
+    total_loss, correct, total = 0.0, 0, 0
+    for step, (inputs, labels, _) in enumerate(loader, 1):
+        inputs = inputs.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
         with autocast_ctx():
-            logits, _ = model(waveforms)
+            logits, _ = head_forward(model, inputs) if cached_inputs else model(inputs)
             loss = criterion(logits, labels)
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -253,25 +343,30 @@ def train_one_epoch(model, loader, optimizer, criterion, device, scaler, autocas
         correct += (preds == labels).sum().item()
         total += labels.size(0)
         total_loss += loss.item()
-        if step % 100 == 0:
+        if not cached_inputs and step % 100 == 0:
             logger.info(f"  Epoch {epoch} Step {step}/{len(loader)} loss={loss.item():.4f}")
     return {"loss": total_loss / max(len(loader), 1), "acc": correct / max(total, 1)}
 
 
 @torch.no_grad()
-def evaluate(model, loader, criterion, device, autocast_ctx) -> Dict:
+def evaluate(model, loader, criterion, device, autocast_ctx, cached_inputs: bool, log_prefix: str = "") -> Dict:
     model.eval()
     all_probs, all_labels = [], []
     total_loss = 0.0
-    for waveforms, labels, _ in loader:
-        waveforms = waveforms.to(device, non_blocking=True)
+    t0 = time.time()
+    n_seen = 0
+    for step, (inputs, labels, _) in enumerate(loader, 1):
+        inputs = inputs.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
         with autocast_ctx():
-            logits, _ = model(waveforms)
+            logits, _ = head_forward(model, inputs) if cached_inputs else model(inputs)
             loss = criterion(logits, labels)
         total_loss += loss.item()
         all_probs.extend(torch.sigmoid(logits.float()).cpu().tolist())
         all_labels.extend(labels.cpu().tolist())
+        n_seen += labels.size(0)
+        if log_prefix and (step % 400 == 0 or step == len(loader)):
+            logger.info(f"  {log_prefix} {step}/{len(loader)} ({n_seen} clips in {time.time()-t0:.0f}s)")
 
     from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
     preds = [1 if p >= 0.5 else 0 for p in all_probs]
@@ -285,18 +380,49 @@ def evaluate(model, loader, criterion, device, autocast_ctx) -> Dict:
     }
 
 
+def _stratified_subset(dataset: Dataset, max_per_split: int) -> Dataset:
+    """Select balanced subset (50/50 bonafide/spoof) capped at max_per_split."""
+    if len(dataset) <= max_per_split:
+        return dataset
+    if hasattr(dataset, "samples"):
+        real_idx = [i for i, s in enumerate(dataset.samples) if s["label"] == 0]
+        fake_idx = [i for i, s in enumerate(dataset.samples) if s["label"] == 1]
+    else:
+        real_idx = [i for i, y in enumerate(dataset.labels) if int(y) == 0]
+        fake_idx = [i for i, y in enumerate(dataset.labels) if int(y) == 1]
+    half = max_per_split // 2
+    picked = real_idx[:half] + fake_idx[: max_per_split - min(half, len(real_idx))]
+    return torch.utils.data.Subset(dataset, picked)
+
+
 @torch.no_grad()
-def export_embeddings(model, loaders_with_splits: List[Tuple[str, DataLoader]], device, autocast_ctx, out_path: Path):
+def export_embeddings(
+    model,
+    splits_with_ds: List[Tuple[str, Dataset, bool]],
+    batch_size: int,
+    num_workers: int,
+    device: torch.device,
+    autocast_ctx,
+    out_path: Path,
+    max_per_split: int = 2500,
+):
+    """Export compact float16 balanced embeddings + saliency (<10 MB for GitHub)."""
     model.eval()
     all_embs, all_probs, all_saliency, all_labels, all_ids, all_splits = [], [], [], [], [], []
-    for split_name, loader in loaders_with_splits:
-        for waveforms, labels, ids in loader:
-            waveforms = waveforms.to(device, non_blocking=True)
+    for split_name, ds, cached_inputs in splits_with_ds:
+        sub_ds = _stratified_subset(ds, max_per_split)
+        loader = DataLoader(sub_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=(device.type == "cuda"))
+        for inputs, labels, ids in loader:
+            inputs = inputs.to(device, non_blocking=True)
             with autocast_ctx():
-                logits, emb, saliency = model(waveforms, return_saliency=True)
-            all_embs.append(emb.float().cpu().numpy())
+                logits, emb, saliency = (
+                    head_forward(model, inputs, return_saliency=True)
+                    if cached_inputs
+                    else model(inputs, return_saliency=True)
+                )
+            all_embs.append(emb.to(torch.float16).cpu().numpy())
             all_probs.extend(torch.sigmoid(logits.float()).cpu().tolist())
-            all_saliency.append(saliency.float().cpu().numpy())
+            all_saliency.append(saliency.to(torch.float16).cpu().numpy())
             all_labels.extend(labels.numpy().tolist())
             all_ids.extend(list(ids))
             all_splits.extend([split_name] * len(ids))
@@ -311,7 +437,8 @@ def export_embeddings(model, loaders_with_splits: List[Tuple[str, DataLoader]], 
         ids=np.array(all_ids),
         splits=np.array(all_splits),
     )
-    logger.info(f"Embeddings exported -> {out_path} ({len(all_ids)} total samples)")
+    size_mb = out_path.stat().st_size / (1024 * 1024)
+    logger.info(f"Embeddings exported -> {out_path} ({len(all_ids)} samples, {size_mb:.2f} MB)")
 
 
 def main():
@@ -328,14 +455,16 @@ def main():
     parser = argparse.ArgumentParser(description="VeriSight v2 — Train Audio XLS-R Head (Laptop 2)")
     parser.add_argument("--config", default="configs/v2_cuda.yaml")
     parser.add_argument("--data_root", default="Dataset_L2/ASVspoof2019_LA")
-    parser.add_argument("--ood_dir", default="Dataset_L2/audio_ood", help="Out-of-domain audio for OOD eval")
+    parser.add_argument("--ood_dir", default="Dataset_L2/audio_ood")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=(0 if sys.platform == "win32" else 2))
     parser.add_argument("--max_train_samples", type=int, default=None)
     parser.add_argument("--max_eval_samples", type=int, default=None)
+    parser.add_argument("--max_export_per_split", type=int, default=2500)
+    parser.add_argument("--no_cache_backbone", action="store_true", help="Re-run frozen backbone every epoch")
     parser.add_argument("--dry_run", action="store_true", help="Verify setup without training")
-    parser.add_argument("--backbone", default=None, help="Override backbone (e.g. facebook/wav2vec2-base)")
+    parser.add_argument("--backbone", default=None, help="Override backbone")
     args = parser.parse_args()
 
     import yaml
@@ -357,6 +486,7 @@ def main():
     amp_enabled = bool(cfg["training_v2"]["amp"] and device.type == "cuda")
     sample_rate = cfg["models_v2"]["audio"]["sample_rate"]
     max_duration = cfg["models_v2"]["audio"]["max_duration_seconds"]
+    freeze_backbone = bool(cfg["models_v2"]["audio"]["freeze_backbone"])
 
     logger.info(f"Backbone: {backbone} | Epochs: {epochs} | Batch: {batch_size} | AMP: {amp_enabled}")
 
@@ -378,29 +508,39 @@ def main():
     from src.models.v2.audio_model import AudioV2Detector
     model = AudioV2Detector(
         backbone_name=backbone,
-        freeze_backbone=cfg["models_v2"]["audio"]["freeze_backbone"],
+        freeze_backbone=freeze_backbone,
         embedding_dim=emb_dim,
         dropout=cfg["models_v2"]["dropout"],
     ).to(device)
     if getattr(model, "use_mock_backbone", False):
         raise RuntimeError(
             f"Backbone '{backbone}' fell back to mock backbone! "
-            "Check internet/HuggingFace access and ensure transformers>=4.48.0,<5 is installed."
+            "Check transformers==4.49.0 and HuggingFace cache."
         )
 
     n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"Trainable parameters: {n_trainable:,}")
+    logger.info(f"Trainable head parameters: {n_trainable:,}")
 
     train_ds = ASVspoofDataset(args.data_root, "train", sample_rate, max_duration, args.max_train_samples)
     dev_ds   = ASVspoofDataset(args.data_root, "dev",   sample_rate, max_duration, args.max_eval_samples)
     eval_ds  = ASVspoofDataset(args.data_root, "eval",  sample_rate, max_duration, args.max_eval_samples)
 
     pin = device.type == "cuda"
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=args.num_workers, pin_memory=pin)
-    dev_loader   = DataLoader(dev_ds,   batch_size=batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=pin)
-    eval_loader  = DataLoader(eval_ds,  batch_size=batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=pin)
+    scaler, autocast_ctx = _make_amp_helpers(amp_enabled)
+    use_cache = freeze_backbone and not args.no_cache_backbone
 
-    # Class-balanced pos_weight (bonafide is minority ~10% in ASVspoof LA).
+    t_train_start = time.time()
+    if use_cache:
+        cache_dir = Path("Dataset_L2/.xlsr_cache")
+        train_feat_ds = build_or_load_backbone_cache(model, train_ds, "train", cache_dir, batch_size, args.num_workers, device, autocast_ctx)
+        dev_feat_ds   = build_or_load_backbone_cache(model, dev_ds,   "dev",   cache_dir, batch_size, args.num_workers, device, autocast_ctx)
+        train_loader = DataLoader(train_feat_ds, batch_size=64, shuffle=True,  num_workers=0, pin_memory=pin)
+        dev_loader   = DataLoader(dev_feat_ds,   batch_size=64, shuffle=False, num_workers=0, pin_memory=pin)
+    else:
+        train_feat_ds, dev_feat_ds = train_ds, dev_ds
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=args.num_workers, pin_memory=pin)
+        dev_loader   = DataLoader(dev_ds,   batch_size=batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=pin)
+
     n_pos = sum(1 for s in train_ds.samples if s["label"] == 1)
     n_neg = max(1, len(train_ds.samples) - n_pos)
     pos_weight = torch.tensor([n_neg / max(n_pos, 1)], dtype=torch.float32, device=device)
@@ -409,17 +549,15 @@ def main():
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=wd)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    scaler, autocast_ctx = _make_amp_helpers(amp_enabled)
 
     best_auc, best_epoch, no_improve = -1.0, 0, 0
     ckpt_path = Path(cfg["models_v2"]["audio"]["checkpoint"])
     ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-    t_train_start = time.time()
 
     for epoch in range(1, epochs + 1):
         t0 = time.time()
-        train_metrics = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler, autocast_ctx, epoch)
-        dev_metrics   = evaluate(model, dev_loader, criterion, device, autocast_ctx)
+        train_metrics = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler, autocast_ctx, epoch, cached_inputs=use_cache)
+        dev_metrics   = evaluate(model, dev_loader, criterion, device, autocast_ctx, cached_inputs=use_cache)
         scheduler.step()
 
         logger.info(
@@ -449,31 +587,32 @@ def main():
 
     total_train_time = round(time.time() - t_train_start, 1)
 
-    # Reload best weights before final eval & embedding export.
     if ckpt_path.exists():
         best_ckpt = torch.load(str(ckpt_path), map_location=device, weights_only=True)
         model.load_state_dict(best_ckpt.get("state_dict", best_ckpt), strict=False)
         logger.info(f"Reloaded best checkpoint from epoch {best_epoch} for final evaluation.")
 
     logger.info("=== Final Evaluation on ASVspoof 2019 LA EVAL split ===")
-    eval_metrics = evaluate(model, eval_loader, criterion, device, autocast_ctx)
-    logger.info(f"EVAL | acc={eval_metrics['acc']} f1={eval_metrics['f1']} auc={eval_metrics['auc']}")
+    eval_loader = DataLoader(eval_ds, batch_size=batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=pin)
+    eval_metrics = evaluate(model, eval_loader, criterion, device, autocast_ctx, cached_inputs=False, log_prefix="Eval")
+    logger.info(f"EVAL | n={eval_metrics['n_samples']} acc={eval_metrics['acc']} f1={eval_metrics['f1']} auc={eval_metrics['auc']}")
 
     ood_metrics = None
     ood_ds = FolderAudioDataset(args.ood_dir, sample_rate=sample_rate, max_duration_seconds=max_duration)
     if len(ood_ds) > 0:
         ood_loader = DataLoader(ood_ds, batch_size=batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=pin)
-        ood_metrics = evaluate(model, ood_loader, criterion, device, autocast_ctx)
+        ood_metrics = evaluate(model, ood_loader, criterion, device, autocast_ctx, cached_inputs=False)
         logger.info(f"OOD ({args.ood_dir}) | n={len(ood_ds)} acc={ood_metrics['acc']} f1={ood_metrics['f1']} auc={ood_metrics['auc']}")
-    else:
-        logger.info(f"No labeled OOD audio found under {args.ood_dir} (expect real/ and fake/ subfolders).")
 
     export_embeddings(
         model,
-        [("dev", dev_loader), ("eval", eval_loader)],
-        device,
-        autocast_ctx,
-        Path("data/cache/audio_l2_embeddings.npz"),
+        [("dev", dev_feat_ds, use_cache), ("eval", eval_ds, False)],
+        batch_size=batch_size,
+        num_workers=args.num_workers,
+        device=device,
+        autocast_ctx=autocast_ctx,
+        out_path=Path("data/cache/audio_l2_embeddings.npz"),
+        max_per_split=args.max_export_per_split,
     )
 
     peak_vram_gb = round(torch.cuda.max_memory_allocated(device) / 1e9, 3) if device.type == "cuda" else 0.0
