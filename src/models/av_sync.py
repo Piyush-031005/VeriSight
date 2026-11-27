@@ -95,7 +95,7 @@ class AVSyncDetector:
         except ImportError:
             return self._null_result("opencv-python-headless not installed; cannot compute AV sync.")
 
-        mouth_signal, n_frames = self._extract_mouth_motion(video_path)
+        mouth_signal, valid_indices, total_steps, n_frames = self._extract_mouth_motion(video_path)
         if mouth_signal is None or len(mouth_signal) < 3:
             return self._null_result(
                 "Could not detect mouth region in enough frames (need >=3 frames with face)."
@@ -113,8 +113,17 @@ class AVSyncDetector:
         if audio_rms < 1e-6:
             return self._null_result("Audio is essentially silent; AV sync cannot be computed.")
 
-        audio_signal = self._audio_envelope(waveform, sr, n_frames=len(mouth_signal))
-        corr = self._pearson_r(mouth_signal, audio_signal)
+        # Align mouth motion steps against exact corresponding timestamps in full audio envelope
+        audio_full = self._audio_envelope(waveform, sr, n_frames=max(total_steps, len(mouth_signal)))
+        valid_idx = np.clip(np.asarray(valid_indices, dtype=int), 0, len(audio_full) - 1)
+        audio_signal = audio_full[valid_idx]
+
+        # Allow ±1 frame mux latency tolerance (~125ms) typical of social-media MP4 containers
+        corrs = [self._pearson_r(mouth_signal, audio_signal)]
+        if len(mouth_signal) >= 6:
+            corrs.append(self._pearson_r(mouth_signal[1:], audio_signal[:-1]))
+            corrs.append(self._pearson_r(mouth_signal[:-1], audio_signal[1:]))
+        corr = max(corrs)
         av_sync_score = self._corr_to_score(corr)
 
         is_contradiction = av_sync_score < self.contradiction_threshold
@@ -138,13 +147,13 @@ class AVSyncDetector:
 
     def _extract_mouth_motion(
         self, video_path: Path
-    ) -> Tuple[Optional[np.ndarray], int]:
-        """Return per-frame mouth-region motion energy array and analyzed face frame count."""
+    ) -> Tuple[Optional[np.ndarray], List[int], int, int]:
+        """Return (mouth motion array, valid sampled step indices, total sampled steps, detected face count)."""
         import cv2
 
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
-            return None, 0
+            return None, [], 0, 0
 
         video_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         step = max(1, int(round(video_fps / max(self.sample_fps, 1.0))))
@@ -152,8 +161,9 @@ class AVSyncDetector:
 
         face_cascade = self._get_face_detector()
         motion_values: List[float] = []
+        valid_indices: List[int] = []
         prev_mouth_roi: Optional[np.ndarray] = None
-        last_box: Optional[Tuple[int, int, int, int]] = None
+        smooth_box: Optional[Tuple[float, float, float, float]] = None
         missed_streak = 0
         faces_detected = 0
         frame_idx = 0
@@ -166,6 +176,7 @@ class AVSyncDetector:
             frame_idx += 1
             if frame_idx % step != 0:
                 continue
+            step_pos = sampled
             sampled += 1
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -174,23 +185,41 @@ class AVSyncDetector:
             if img_w > 480:
                 scale = 480.0 / img_w
                 gray = cv2.resize(gray, (480, max(1, int(round(img_h * scale)))))
+                img_h, img_w = gray.shape[:2]
 
-            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
+            min_face_dim = max(36, min(img_w, img_h) // 10)
+            faces = face_cascade.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=6, minSize=(min_face_dim, min_face_dim)
+            )
 
             if len(faces) > 0:
-                # Pick largest detected face to avoid background false positives.
-                x, y, w, h = max(faces, key=lambda b: int(b[2]) * int(b[3]))
-                last_box = (int(x), int(y), int(w), int(h))
+                # Pick largest detected face and apply EMA smoothing to reduce Haar box jitter
+                nx, ny, nw, nh = max(faces, key=lambda b: int(b[2]) * int(b[3]))
+                if smooth_box is not None:
+                    sx, sy, sw, sh = smooth_box
+                    dist = abs(nx - sx) + abs(ny - sy)
+                    if dist < 0.6 * max(sw, nw):
+                        alpha = 0.35
+                        smooth_box = (
+                            (1 - alpha) * sx + alpha * nx,
+                            (1 - alpha) * sy + alpha * ny,
+                            (1 - alpha) * sw + alpha * nw,
+                            (1 - alpha) * sh + alpha * nh,
+                        )
+                    else:
+                        smooth_box = (float(nx), float(ny), float(nw), float(nh))
+                        prev_mouth_roi = None
+                else:
+                    smooth_box = (float(nx), float(ny), float(nw), float(nh))
                 missed_streak = 0
                 faces_detected += 1
-            elif last_box is not None and missed_streak < 3:
-                x, y, w, h = last_box
+            elif smooth_box is not None and missed_streak < 3:
                 missed_streak += 1
             else:
                 prev_mouth_roi = None
                 continue
 
-            img_h, img_w = gray.shape[:2]
+            x, y, w, h = [int(round(v)) for v in smooth_box]
             my1 = max(0, min(img_h - 1, y + int(h * 0.60)))
             my2 = max(my1 + 1, min(img_h, y + int(h * 0.95)))
             mx1 = max(0, min(img_w - 1, x))
@@ -203,19 +232,21 @@ class AVSyncDetector:
             if prev_mouth_roi is not None:
                 diff = np.abs(mouth_roi.astype(np.float32) - prev_mouth_roi.astype(np.float32))
                 motion_values.append(float(np.mean(diff)))
+                valid_indices.append(step_pos)
             else:
                 motion_values.append(0.0)
+                valid_indices.append(step_pos)
             prev_mouth_roi = mouth_roi
 
         cap.release()
         if faces_detected < 3 or len(motion_values) < 3:
-            return None, faces_detected
+            return None, [], sampled, faces_detected
 
         signal = np.array(motion_values, dtype=np.float32)
         mx = float(signal.max())
         if mx > 0:
             signal = signal / mx
-        return signal, faces_detected
+        return signal, valid_indices, sampled, faces_detected
 
     def _get_face_detector(self):
         if self._face_detector is None:

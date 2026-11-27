@@ -11,7 +11,7 @@ from src.config import load_config
 from .decision import Signal, classify, fuse
 from .language import TEXT_MODELS, analyze_text, compare_caption, caption_reference
 from .runtime import ModelSlot
-from .speech import AUDIO_MODELS, acoustic, decode, transcribe
+from .speech import AUDIO_MODELS, NoAudioStreamError, acoustic, decode, transcribe
 
 FACE = "Samson5827/deepfakeguard-v2"
 IMAGE = "Organika/sdxl-detector"
@@ -91,6 +91,9 @@ class InferencePipeline:
                      extracted_text_detected=bool(caption), ocr_word_count=0)
         try:
             wav = decode(path)
+        except NoAudioStreamError:
+            cross["transcript_status"] = "No audio track"
+            return empty(self.settings.audio_model, "No audio track detected in video."), cross, None
         except (OSError, ValueError, RuntimeError, EOFError, subprocess.SubprocessError, wave.Error) as exc:
             cross["transcript_status"] = "No decodable audio"
             return empty(self.settings.audio_model, f"Audio decoding failed: {exc}"), cross, None

@@ -3,12 +3,17 @@ import io
 import json
 from pathlib import Path
 import math
+import shutil
 import subprocess
 import wave
 
 import numpy as np
 
 from .runtime import positive_index
+
+
+class NoAudioStreamError(ValueError):
+    """Raised when media has no decodable audio stream."""
 
 MELODY = "MelodyMachine/Deepfake-audio-detection-V2"
 GARY = "garystafford/wav2vec2-deepfake-voice-detector"
@@ -22,17 +27,56 @@ ASR = "Systran/faster-whisper-tiny"
 RATE = 16000
 
 
+def _decode_with_pyav(path):
+    import av
+
+    cap = 30 * RATE
+    with av.open(str(path)) as container:
+        if not container.streams.audio:
+            raise NoAudioStreamError("Video contains no audio track")
+        stream = container.streams.audio[0]
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=RATE)
+        chunks = []
+        total = 0
+        for frame in container.decode(stream):
+            for resampled in resampler.resample(frame):
+                arr = resampled.to_ndarray().reshape(-1)
+                if len(arr):
+                    chunks.append(arr)
+                    total += len(arr)
+            if total >= cap:
+                break
+        for resampled in resampler.resample(None):
+            arr = resampled.to_ndarray().reshape(-1)
+            if len(arr):
+                chunks.append(arr)
+                total += len(arr)
+    if not chunks:
+        raise NoAudioStreamError("Empty audio stream")
+    return np.concatenate(chunks)[:cap].astype(np.float32) / 32768.0
+
+
 def decode(path):
+    try:
+        return _decode_with_pyav(path)
+    except NoAudioStreamError:
+        raise
+    except Exception as pyav_exc:
+        if shutil.which("ffmpeg") is None:
+            raise ValueError(f"Audio decoding failed: {pyav_exc}") from pyav_exc
     command = ["ffmpeg", "-nostdin", "-v", "error", "-i", str(path), "-map", "0:a:0",
                "-t", "30", "-ac", "1", "-ar", str(RATE), "-c:a", "pcm_s16le",
                "-f", "wav", "pipe:1"]
     proc = subprocess.run(command, capture_output=True, timeout=60)
     if proc.returncode:
-        raise ValueError(proc.stderr.decode(errors="replace").strip()[-300:] or "Audio decoding failed")
+        err = proc.stderr.decode(errors="replace").strip()[-300:] or "Audio decoding failed"
+        if "matches no streams" in err or "does not contain any stream" in err:
+            raise NoAudioStreamError("Video contains no audio track")
+        raise ValueError(err)
     with wave.open(io.BytesIO(proc.stdout)) as pcm:
         data = pcm.readframes(30 * RATE)
     if not data:
-        raise ValueError("Empty audio stream")
+        raise NoAudioStreamError("Empty audio stream")
     return np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.
 
 
@@ -95,12 +139,19 @@ def _load_streamed_int8(model_dir):
     return model.eval()
 
 
+def _hf_cached_or_fetch(repo_id, filename, revision):
+    from huggingface_hub import hf_hub_download
+    try:
+        return hf_hub_download(repo_id, filename, revision=revision, local_files_only=True)
+    except Exception:
+        return hf_hub_download(repo_id, filename, revision=revision)
+
+
 def onnx_audio_files():
     """The export publishes the graph; its parent publishes labels and preprocessing."""
-    from huggingface_hub import hf_hub_download
-    model_path = hf_hub_download(ONNX_AUDIO, "model_int8.onnx", revision=ONNX_REV)
-    config_path = hf_hub_download(ONNX_ORIGIN, "config.json", revision=ORIGIN_REV)
-    hf_hub_download(ONNX_ORIGIN, "preprocessor_config.json", revision=ORIGIN_REV)
+    model_path = _hf_cached_or_fetch(ONNX_AUDIO, "model_int8.onnx", ONNX_REV)
+    config_path = _hf_cached_or_fetch(ONNX_ORIGIN, "config.json", ORIGIN_REV)
+    _hf_cached_or_fetch(ONNX_ORIGIN, "preprocessor_config.json", ORIGIN_REV)
     return model_path, Path(config_path)
 
 
@@ -118,7 +169,11 @@ def _load_onnx_audio():
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
     options.add_session_config_entry("session.disable_prepacking", "1")
     model = ort.InferenceSession(model_path, sess_options=options, providers=["CPUExecutionProvider"])
-    return AutoFeatureExtractor.from_pretrained(config_path.parent), model, index
+    try:
+        extractor = AutoFeatureExtractor.from_pretrained(config_path.parent, local_files_only=True)
+    except Exception:
+        extractor = AutoFeatureExtractor.from_pretrained(config_path.parent)
+    return extractor, model, index
 
 
 def _onnx_probability(samples, extractor, model, index):

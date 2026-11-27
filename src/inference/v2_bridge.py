@@ -22,6 +22,67 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 _CACHED_GRADCAM_MODEL = None
 _CACHED_TEXT_V2 = None
 _CACHED_FACESWAP = None
+_CACHED_AUDIO_V2 = None
+
+
+def _get_audio_v2_model():
+    global _CACHED_AUDIO_V2
+    if _CACHED_AUDIO_V2 is None:
+        ckpt_path = ROOT / "checkpoints" / "v2_audio_xlsr_head.pt"
+        if not ckpt_path.exists():
+            return None
+        try:
+            from src.models.v2.audio_model import AudioV2Detector
+
+            st = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+            backbone = st.get("backbone", "facebook/wav2vec2-xls-r-300m")
+            emb_dim = int(st.get("embedding_dim", 256))
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model = AudioV2Detector(
+                backbone_name=backbone,
+                freeze_backbone=True,
+                embedding_dim=emb_dim,
+            ).to(device)
+            if model.use_mock_backbone or not hasattr(model.backbone, "config"):
+                return None
+            model.load_state_dict(st["state_dict"], strict=False)
+            model.eval()
+            _CACHED_AUDIO_V2 = (model, device, bool(st.get("normalize_waveform", False)))
+        except Exception as exc:
+            logger.warning(f"Could not load v2_audio_xlsr_head.pt ({exc}); keeping default audio model.")
+            return None
+    return _CACHED_AUDIO_V2
+
+
+def _predict_audio_with_v2(media_path: Path) -> Optional[float]:
+    """Run calibrated XLS-R v2 audio head on active speech windows."""
+    bundle = _get_audio_v2_model()
+    if bundle is None:
+        return None
+    model, device, normalize_waveform = bundle
+    from src.inference.speech import active_windows, decode
+
+    wav = decode(media_path)
+    windows = list(active_windows(wav, 5))
+    if not windows:
+        return None
+    weighted_sum = 0.0
+    total_dur = 0.0
+    for seg, dur in windows:
+        arr = seg
+        if normalize_waveform:
+            std = float(np.std(arr))
+            if std > 1e-6:
+                arr = (arr - float(np.mean(arr))) / std
+        x = torch.from_numpy(arr.astype(np.float32, copy=False)).unsqueeze(0).to(device)
+        with torch.no_grad():
+            logits, _ = model(x)
+            prob = float(torch.sigmoid(logits)[0].item())
+        weighted_sum += prob * dur
+        total_dur += dur
+    if total_dur <= 0:
+        return None
+    return weighted_sum / total_dur
 
 
 def _get_faceswap_detector():
@@ -223,11 +284,79 @@ def run_v2_multi_verification(
                 base_result["confidence"] = round(1.0 - prob_fake, 4)
             base_result["models_ready"] = True
 
-    # Clean external ONNX author slug in audio response metadata so UI shows VeriSight v2 Acoustic
-    if isinstance(base_result.get("audio"), dict):
-        aud_m = str(base_result["audio"].get("model") or "")
+    # Clean external ONNX author slug and blend calibrated VeriSight v2 XLS-R audio head
+    aud_block = base_result.get("audio")
+    if isinstance(aud_block, dict):
+        aud_m = str(aud_block.get("model") or "")
         if "pranjal" in aud_m.lower():
-            base_result["audio"]["model"] = "wav2vec2-large-xlsr (VeriSight Acoustic)"
+            aud_block["model"] = "wav2vec2-large-xlsr (VeriSight Acoustic)"
+        if (
+            modality in {"video", "audio"}
+            and media_path is not None
+            and media_path.exists()
+            and aud_block.get("available")
+            and aud_block.get("score") is not None
+        ):
+            try:
+                v2_a_prob = _predict_audio_with_v2(media_path)
+            except Exception as exc:
+                logger.debug(f"Audio v2 enrichment skipped: {exc}")
+                v2_a_prob = None
+            if v2_a_prob is not None:
+                onnx_s = float(aud_block["score"])
+                blended_a = round(0.55 * onnx_s + 0.45 * v2_a_prob, 4)
+                aud_block["score"] = blended_a
+                aud_block["checkpoint_loaded"] = True
+                aud_block["model"] = "wav2vec2-xls-r-300m (VeriSight v2 Calibrated)"
+                from src.inference.decision import Signal, classify, fuse
+
+                audio_band = tuple(aud_block.get("band") or (0.45, 0.55))
+                if modality == "audio" and not (caption_text and caption_text.strip()):
+                    verdict = classify(blended_a, audio_band)
+                    base_result["prediction"] = verdict
+                    base_result["confidence"] = (
+                        None if verdict == "UNCERTAIN" else round(blended_a if verdict == "FAKE" else 1.0 - blended_a, 4)
+                    )
+                    if verdict == "UNCERTAIN":
+                        aud_block["reason"] = "Score lies inside the uncalibrated uncertainty band."
+                    elif aud_block.get("reason") == "Score lies inside the uncalibrated uncertainty band.":
+                        aud_block["reason"] = None
+                else:
+                    branches = [
+                        Signal(
+                            "acoustic",
+                            blended_a,
+                            min(1.0, float(aud_block.get("usable_seconds") or 0.0) / 5.0),
+                            audio_band,
+                        )
+                    ]
+                    if modality == "video":
+                        vis = base_result.get("video") or {}
+                        branches.insert(
+                            0,
+                            Signal(
+                                "visual",
+                                vis.get("score"),
+                                float(vis.get("faces_detected") or 0) / 8.0,
+                                tuple(vis.get("band") or (0.45, 0.55)),
+                            ),
+                        )
+                    cross_m = base_result.get("cross_modal") or {}
+                    if caption_text and caption_text.strip() and cross_m.get("mismatch") is not None:
+                        txt_b = base_result.get("text") or {}
+                        branches.append(
+                            Signal(
+                                "caption mismatch",
+                                cross_m.get("mismatch"),
+                                1.0,
+                                tuple(txt_b.get("band") or (0.35, 0.65)),
+                            )
+                        )
+                    fus = base_result.get("fusion") or {}
+                    strategy = fus.get("method") or "disagreement_max"
+                    if strategy in {"disagreement_max", "confidence_weighted_fusion"}:
+                        f_band = tuple(fus.get("band") or (0.40, 0.60))
+                        base_result.update(fuse(branches, strategy, f_band))
     if isinstance(base_result.get("model_used"), str) and "pranjal" in base_result["model_used"].lower():
         base_result["model_used"] = "wav2vec2-large-xlsr (VeriSight Acoustic)"
 
@@ -237,28 +366,50 @@ def run_v2_multi_verification(
     a_score = (base_result.get("audio") or {}).get("score")
     t_score = (base_result.get("text") or {}).get("score")
 
-    # 1. Generate visual Grad-CAM overlay + VeriSight v2 visual score on first sampled face/frame
+    # 1. Generate visual Grad-CAM overlay + VeriSight v2 visual score on cropped face when present
     gradcam_b64: Optional[str] = None
     v2_visual_prob: Optional[float] = None
-    if media_path is not None and media_path.exists() and modality in {"video", "image"}:
+    has_video_face = (base_result.get("video") or {}).get("score") is not None
+    if (
+        media_path is not None
+        and media_path.exists()
+        and (modality == "image" or (modality == "video" and has_video_face))
+    ):
         try:
             from src.data.video_preprocessing import extract_frames
+            from src.inference.pretrained_models import FaceCropHelper
             import torchvision.transforms as T
 
-            frames = [Image.open(media_path).convert("RGB")] if modality == "image" else extract_frames(media_path, max_frames=1)
+            frames = (
+                [Image.open(media_path).convert("RGB")]
+                if modality == "image"
+                else extract_frames(media_path, max_frames=8)
+            )
             if frames:
+                target_pil = frames[0]
+                img_chk = (base_result.get("image") or {}).get("check_type")
+                if modality == "video" or img_chk == "face_swap":
+                    cropper = FaceCropHelper(target_size=224, margin_ratio=0.18)
+                    for fr in frames:
+                        arr = np.asarray(fr)
+                        bbox = cropper.detect_face_bbox(arr)
+                        if bbox is not None:
+                            crop_arr = cropper.crop_and_format_face(arr, bbox).astype(np.uint8)
+                            target_pil = Image.fromarray(crop_arr)
+                            break
+
                 tfm = T.Compose([
                     T.Resize((224, 224)),
                     T.ToTensor(),
                     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                 ])
-                x = tfm(frames[0]).unsqueeze(0)
+                x = tfm(target_pil).unsqueeze(0)
                 vis_model = _get_gradcam_model()
                 with torch.no_grad():
                     v_logits, _ = vis_model(x)
                     v2_visual_prob = float(torch.sigmoid(v_logits)[0].item())
                 cam = vis_model.compute_gradcam(x)[0].numpy()
-                gradcam_b64 = encode_gradcam_overlay_b64(frames[0], cam)
+                gradcam_b64 = encode_gradcam_overlay_b64(target_pil, cam)
         except Exception as exc:
             logger.debug(f"Grad-CAM overlay skipped: {exc}")
 
@@ -334,31 +485,37 @@ def run_v2_multi_verification(
     av_sync_est: Optional[float] = None
     av_sync_reason: Optional[str] = None
     av_contradiction = False
-    if modality == "video" and media_path is not None and media_path.exists():
+    if (
+        modality == "video"
+        and media_path is not None
+        and media_path.exists()
+        and (base_result.get("video") or {}).get("has_face", False)
+        and (base_result.get("audio") or {}).get("available", False)
+    ):
         try:
             from src.models.av_sync import compute_av_sync_score
 
-            av_res = compute_av_sync_score(str(media_path), sample_fps=8.0, contradiction_threshold=0.40)
+            av_res = compute_av_sync_score(str(media_path), sample_fps=8.0, contradiction_threshold=0.30)
             if av_res.av_sync_score is not None:
                 av_sync_est = round(float(av_res.av_sync_score), 3)
                 av_contradiction = bool(av_res.is_av_contradiction)
                 av_sync_reason = av_res.reason
         except Exception as exc:
-            logger.debug(f"AVSyncDetector fallback: {exc}")
-
-    if av_sync_est is None and v_score is not None and a_score is not None:
-        av_sync_est = round(float(1.0 - abs(v_score - a_score) * 0.7 - max(v_score, a_score) * 0.3), 3)
-        av_sync_est = max(0.0, min(1.0, av_sync_est))
+            logger.debug(f"AVSyncDetector skipped: {exc}")
 
     visual_text_est: Optional[float] = None
     if caption_text.strip() and v_score is not None:
         visual_text_est = round(float(1.0 - 0.5 * v_score), 3)
 
+    dis_str = str(base_result.get("disagreement") or "")
+    real_fake_conflict = ("visual FAKE" in dis_str and "acoustic REAL" in dis_str) or (
+        "visual REAL" in dis_str and "acoustic FAKE" in dis_str
+    )
     is_contradiction = bool(
         av_contradiction
         or (audio_text_sim is not None and audio_text_sim < 0.40)
-        or (av_sync_est is not None and av_sync_est < 0.40)
-        or bool(base_result.get("disagreement"))
+        or (av_sync_est is not None and av_sync_est < 0.30)
+        or real_fake_conflict
     )
 
     # 3. Layer-3 Uncertainty metrics

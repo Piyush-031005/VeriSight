@@ -16,6 +16,15 @@ import torch
 logger = logging.getLogger(__name__)
 
 
+def _hf_download_cached(repo_id: str, filename: str) -> str:
+    from huggingface_hub import hf_hub_download
+
+    try:
+        return hf_hub_download(repo_id=repo_id, filename=filename, local_files_only=True)
+    except Exception:
+        return hf_hub_download(repo_id=repo_id, filename=filename)
+
+
 # ---------------------------------------------------------------------------
 # 1. Face Detector and Margin Cropper
 # ---------------------------------------------------------------------------
@@ -58,39 +67,59 @@ class FaceCropHelper:
         """Find largest frontal human face bounding box (x, y, w, h)."""
         h, w = image_rgb.shape[:2]
 
-        # 1. Try MTCNN first if available
+        # 1. Try MTCNN first if available; upscale small frames for tiny clips (e.g. 124x152).
         mtcnn = self._get_mtcnn()
         if mtcnn is not None:
             try:
-                pil_img = Image.fromarray(image_rgb)
-                boxes, _ = mtcnn.detect(pil_img)
+                scale = 256.0 / min(h, w) if min(h, w) < 256 and min(h, w) > 0 else 1.0
+                if scale > 1.0:
+                    det_img = cv2.resize(
+                        image_rgb,
+                        (int(round(w * scale)), int(round(h * scale))),
+                        interpolation=cv2.INTER_CUBIC,
+                    )
+                else:
+                    det_img = image_rgb
+                pil_img = Image.fromarray(det_img)
+                boxes, probs = mtcnn.detect(pil_img)
                 if boxes is not None and len(boxes) > 0:
-                    # Pick largest bounding box by area
                     best_box = None
-                    max_area = 0
-                    for box in boxes:
-                        x1, y1, x2, y2 = box
-                        area = max(0, x2 - x1) * max(0, y2 - y1)
-                        if area > max_area and area >= 1200:  # At least ~35x35
+                    max_area = 0.0
+                    min_orig_area = 700.0 if min(h, w) < 200 else 1200.0
+                    for idx, box in enumerate(boxes):
+                        prob = float(probs[idx]) if probs is not None and probs[idx] is not None else 0.0
+                        if prob < 0.92:
+                            continue
+                        x1, y1, x2, y2 = [float(v) / scale for v in box]
+                        bw = max(0.0, x2 - x1)
+                        bh = max(0.0, y2 - y1)
+                        area = bw * bh
+                        aspect = bw / max(bh, 1e-6)
+                        if area > max_area and area >= min_orig_area and 0.50 <= aspect <= 1.85:
                             max_area = area
-                            best_box = (int(x1), int(y1), int(x2 - x1), int(y2 - y1))
+                            best_box = (
+                                max(0, int(round(x1))),
+                                max(0, int(round(y1))),
+                                max(1, int(round(bw))),
+                                max(1, int(round(bh))),
+                            )
                     if best_box is not None:
                         return best_box
             except Exception as e:
                 logger.debug("MTCNN detection exception: %s", e)
+            return None
 
-        # 2. Fallback to OpenCV Haar Cascade
+        # 2. Fallback to strict OpenCV Haar Cascade ONLY if MTCNN failed to initialize
         cascade = self._get_cascade()
         if cascade is not None:
             gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
             faces = cascade.detectMultiScale(
                 gray,
                 scaleFactor=1.1,
-                minNeighbors=4,
-                minSize=(36, 36),
+                minNeighbors=6,
+                minSize=(48, 48),
             )
             if len(faces) > 0:
-                # Select largest face by area
                 best_face = max(faces, key=lambda f: f[2] * f[3])
                 return int(best_face[0]), int(best_face[1]), int(best_face[2]), int(best_face[3])
 
@@ -116,9 +145,11 @@ class FaceCropHelper:
 
         crop = image_rgb[y1:y2, x1:x2]
         if crop.size == 0 or crop.shape[0] < 4 or crop.shape[1] < 4:
-            crop = cv2.resize(image_rgb, (self.target_size, self.target_size))
+            interp = cv2.INTER_CUBIC if min(ih, iw) < self.target_size else cv2.INTER_AREA
+            crop = cv2.resize(image_rgb, (self.target_size, self.target_size), interpolation=interp)
         else:
-            crop = cv2.resize(crop, (self.target_size, self.target_size), interpolation=cv2.INTER_LINEAR)
+            interp = cv2.INTER_CUBIC if min(crop.shape[0], crop.shape[1]) < self.target_size else cv2.INTER_AREA
+            crop = cv2.resize(crop, (self.target_size, self.target_size), interpolation=interp)
 
         # float32 in [0.0, 255.0] (unnormalized RGB layout NHWC)
         return crop.astype(np.float32)
@@ -152,15 +183,11 @@ class FaceSwapDetector:
         if self.model_loaded and self.session is not None:
             return True
         try:
-            from huggingface_hub import hf_hub_download
             import onnxruntime as ort
 
-            labels = json.loads(Path(hf_hub_download(self.model_name, "labels_v2.json")).read_text())
+            labels = json.loads(Path(_hf_download_cached(self.model_name, "labels_v2.json")).read_text())
             self.fake_index = positive_index(labels["index_to_label"], {"fake"}, {"real"})
-            model_path = hf_hub_download(
-                repo_id=self.model_name,
-                filename="deepfakeguard_v2.onnx",
-            )
+            model_path = _hf_download_cached(self.model_name, "deepfakeguard_v2.onnx")
             # Create ONNX session on CPU with low thread count to bound CPU usage
             opts = ort.SessionOptions()
             opts.intra_op_num_threads = 2
@@ -221,9 +248,10 @@ class FaceSwapDetector:
             crop = self.cropper.crop_and_format_face(image_rgb, bbox)
             has_face = True
 
-        # 2. Run ONNX inference
+        # 2. Run ONNX inference with horizontal-flip TTA for pose robustness
         face_input = np.expand_dims(crop, axis=0)  # (1, 224, 224, 3)
-        fake_score = self.predict_crop(face_input)
+        face_flip = np.expand_dims(crop[:, ::-1, :].copy(), axis=0)
+        fake_score = 0.5 * (self.predict_crop(face_input) + self.predict_crop(face_flip))
 
         return {
             "score": round(fake_score, 4),
@@ -258,21 +286,28 @@ class FaceSwapDetector:
             if bbox is not None:
                 crop = self.cropper.crop_and_format_face(frame, bbox)
                 face_input = np.expand_dims(crop, axis=0)
+                face_flip = np.expand_dims(crop[:, ::-1, :].copy(), axis=0)
                 try:
-                    f_score = self.predict_crop(face_input)
+                    f_score = 0.5 * (self.predict_crop(face_input) + self.predict_crop(face_flip))
                     frame_scores.append(f_score)
                 except Exception as e:
                     inference_errors += 1
                     logger.warning("Frame face scoring error: %s", e)
 
         faces_count = len(frame_scores)
-        if faces_count == 0:
+        min_faces = min(3, len(frames_rgb)) if len(frames_rgb) >= 6 else 1
+        if faces_count < min_faces:
+            reason = (
+                "Face inference failed on detected crops"
+                if inference_errors and faces_count == 0
+                else (f"No usable human face tracked ({faces_count}/{len(frames_rgb)} frames)" if faces_count > 0 else "No usable face")
+            )
             return {
                 "score": None,
                 "frames_analyzed": len(frames_rgb),
-                "faces_detected": 0,
+                "faces_detected": faces_count,
                 "has_face": False,
-                "reason": "Face inference failed on detected crops" if inference_errors else "No usable face",
+                "reason": reason,
                 "model": self.model_name,
                 "frame_scores": [],
             }
@@ -308,9 +343,14 @@ class SDXLDetector:
             return True
         try:
             from transformers import AutoImageProcessor, AutoModelForImageClassification
-            self.processor = AutoImageProcessor.from_pretrained(self.model_name)
-            self.model, loading = AutoModelForImageClassification.from_pretrained(
-                self.model_name, use_safetensors=True, output_loading_info=True)
+            try:
+                self.processor = AutoImageProcessor.from_pretrained(self.model_name, local_files_only=True)
+                self.model, loading = AutoModelForImageClassification.from_pretrained(
+                    self.model_name, use_safetensors=True, output_loading_info=True, local_files_only=True)
+            except Exception:
+                self.processor = AutoImageProcessor.from_pretrained(self.model_name)
+                self.model, loading = AutoModelForImageClassification.from_pretrained(
+                    self.model_name, use_safetensors=True, output_loading_info=True)
             if loading["missing_keys"] or loading["mismatched_keys"]:
                 raise ValueError("Image checkpoint did not supply all model weights")
             self.model.eval()

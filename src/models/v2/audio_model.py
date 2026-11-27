@@ -44,7 +44,10 @@ class AudioV2Detector(nn.Module):
             try:
                 from transformers import Wav2Vec2Model
 
-                self.backbone = Wav2Vec2Model.from_pretrained(backbone_name)
+                try:
+                    self.backbone = Wav2Vec2Model.from_pretrained(backbone_name, local_files_only=True)
+                except Exception:
+                    self.backbone = Wav2Vec2Model.from_pretrained(backbone_name)
                 hidden_dim = self.backbone.config.hidden_size
                 if freeze_backbone:
                     for p in self.backbone.parameters():
