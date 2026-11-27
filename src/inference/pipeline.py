@@ -147,7 +147,7 @@ class InferencePipeline:
         from src.data.video_preprocessing import extract_frames
         start = time.perf_counter()
         result = response("fusion", self.settings.audio_model)
-        frames = extract_frames(video_path, max_frames=8, max_side=960)
+        frames = extract_frames(video_path, max_frames=8, max_side=1920)
         try:
             if not frames:
                 raise ValueError("No decodable video frames")

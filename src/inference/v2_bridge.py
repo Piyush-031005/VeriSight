@@ -47,7 +47,12 @@ def _get_audio_v2_model():
                 return None
             model.load_state_dict(st["state_dict"], strict=False)
             model.eval()
-            _CACHED_AUDIO_V2 = (model, device, bool(st.get("normalize_waveform", False)))
+            _CACHED_AUDIO_V2 = (
+                model,
+                device,
+                bool(st.get("normalize_waveform", False)),
+                float(st.get("temperature", 1.0)),
+            )
         except Exception as exc:
             logger.warning(f"Could not load v2_audio_xlsr_head.pt ({exc}); keeping default audio model.")
             return None
@@ -55,19 +60,20 @@ def _get_audio_v2_model():
 
 
 def _predict_audio_with_v2(media_path: Path) -> Optional[float]:
-    """Run calibrated XLS-R v2 audio head on active speech windows."""
+    """Run calibrated XLS-R v2 audio head on active speech windows using duration-weighted median."""
     bundle = _get_audio_v2_model()
     if bundle is None:
         return None
-    model, device, normalize_waveform = bundle
+    model, device, normalize_waveform, temperature = bundle
     from src.inference.speech import active_windows, decode
 
     wav = decode(media_path)
     windows = list(active_windows(wav, 5))
     if not windows:
         return None
-    weighted_sum = 0.0
+    scored_windows = []
     total_dur = 0.0
+    temp = max(float(temperature), 1e-3)
     for seg, dur in windows:
         arr = seg
         if normalize_waveform:
@@ -77,12 +83,17 @@ def _predict_audio_with_v2(media_path: Path) -> Optional[float]:
         x = torch.from_numpy(arr.astype(np.float32, copy=False)).unsqueeze(0).to(device)
         with torch.no_grad():
             logits, _ = model(x)
-            prob = float(torch.sigmoid(logits)[0].item())
-        weighted_sum += prob * dur
-        total_dur += dur
+            prob = float(torch.sigmoid(logits / temp)[0].item())
+        scored_windows.append((prob, float(dur)))
+        total_dur += float(dur)
     if total_dur <= 0:
         return None
-    return weighted_sum / total_dur
+    acc = 0.0
+    for prob, dur in sorted(scored_windows, key=lambda pair: pair[0]):
+        acc += dur
+        if acc >= total_dur / 2.0:
+            return prob
+    return scored_windows[-1][0]
 
 
 def _get_faceswap_detector():
@@ -304,7 +315,7 @@ def run_v2_multi_verification(
                 v2_a_prob = None
             if v2_a_prob is not None:
                 onnx_s = float(aud_block["score"])
-                blended_a = round(0.55 * onnx_s + 0.45 * v2_a_prob, 4)
+                blended_a = round(0.62 * onnx_s + 0.38 * v2_a_prob, 4)
                 aud_block["score"] = blended_a
                 aud_block["checkpoint_loaded"] = True
                 aud_block["model"] = "wav2vec2-xls-r-300m (VeriSight v2 Calibrated)"
@@ -389,7 +400,8 @@ def run_v2_multi_verification(
                 target_pil = frames[0]
                 img_chk = (base_result.get("image") or {}).get("check_type")
                 if modality == "video" or img_chk == "face_swap":
-                    cropper = FaceCropHelper(target_size=224, margin_ratio=0.18)
+                    margin = 0.10 if modality == "video" else 0.18
+                    cropper = FaceCropHelper(target_size=224, margin_ratio=margin)
                     for fr in frames:
                         arr = np.asarray(fr)
                         bbox = cropper.detect_face_bbox(arr)

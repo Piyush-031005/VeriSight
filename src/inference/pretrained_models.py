@@ -64,28 +64,34 @@ class FaceCropHelper:
         return self._mtcnn if self._mtcnn is not False else None
 
     def detect_face_bbox(self, image_rgb: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
-        """Find largest frontal human face bounding box (x, y, w, h)."""
+        """Find primary frontal human face bounding box (x, y, w, h) in native image coordinates."""
         h, w = image_rgb.shape[:2]
 
-        # 1. Try MTCNN first if available; upscale small frames for tiny clips (e.g. 124x152).
+        # 1. Try MTCNN first if available; upscale tiny frames (<256) and bound huge frames (>960) for detection speed
         mtcnn = self._get_mtcnn()
         if mtcnn is not None:
             try:
-                scale = 256.0 / min(h, w) if min(h, w) < 256 and min(h, w) > 0 else 1.0
-                if scale > 1.0:
+                if min(h, w) < 256 and min(h, w) > 0:
+                    scale = 256.0 / min(h, w)
+                elif max(h, w) > 960:
+                    scale = 960.0 / max(h, w)
+                else:
+                    scale = 1.0
+
+                if abs(scale - 1.0) > 1e-3:
+                    interp = cv2.INTER_CUBIC if scale > 1.0 else cv2.INTER_AREA
                     det_img = cv2.resize(
                         image_rgb,
-                        (int(round(w * scale)), int(round(h * scale))),
-                        interpolation=cv2.INTER_CUBIC,
+                        (max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
+                        interpolation=interp,
                     )
                 else:
                     det_img = image_rgb
                 pil_img = Image.fromarray(det_img)
                 boxes, probs = mtcnn.detect(pil_img)
                 if boxes is not None and len(boxes) > 0:
-                    best_box = None
-                    max_area = 0.0
                     min_orig_area = 700.0 if min(h, w) < 200 else 1200.0
+                    cands: List[Tuple[float, bool, Tuple[int, int, int, int]]] = []
                     for idx, box in enumerate(boxes):
                         prob = float(probs[idx]) if probs is not None and probs[idx] is not None else 0.0
                         if prob < 0.92:
@@ -95,16 +101,30 @@ class FaceCropHelper:
                         bh = max(0.0, y2 - y1)
                         area = bw * bh
                         aspect = bw / max(bh, 1e-6)
-                        if area > max_area and area >= min_orig_area and 0.50 <= aspect <= 1.85:
-                            max_area = area
-                            best_box = (
-                                max(0, int(round(x1))),
-                                max(0, int(round(y1))),
-                                max(1, int(round(bw))),
-                                max(1, int(round(bh))),
+                        if area >= min_orig_area and 0.50 <= aspect <= 1.85:
+                            cx = x1 + bw / 2.0
+                            cy = y1 + bh / 2.0
+                            is_corner_pip = (
+                                area < 0.02 * (h * w)
+                                and (cx < 0.22 * w or cx > 0.78 * w)
+                                and (cy < 0.28 * h or cy > 0.78 * h)
                             )
-                    if best_box is not None:
-                        return best_box
+                            cands.append(
+                                (
+                                    area,
+                                    is_corner_pip,
+                                    (
+                                        max(0, int(round(x1))),
+                                        max(0, int(round(y1))),
+                                        max(1, int(round(bw))),
+                                        max(1, int(round(bh))),
+                                    ),
+                                )
+                            )
+                    if cands:
+                        non_pip = [c for c in cands if not c[1]]
+                        chosen = max(non_pip or cands, key=lambda c: c[0])
+                        return chosen[2]
             except Exception as e:
                 logger.debug("MTCNN detection exception: %s", e)
             return None
@@ -129,14 +149,15 @@ class FaceCropHelper:
         self,
         image_rgb: np.ndarray,
         bbox: Tuple[int, int, int, int],
+        margin_ratio: Optional[float] = None,
     ) -> np.ndarray:
-        """Crop face with margin_ratio (18%), resize to 224x224 RGB, float32 in [0, 255]."""
+        """Crop face with margin_ratio (default 18%), resize to 224x224 RGB, float32 in [0, 255]."""
         x, y, bw, bh = bbox
         ih, iw = image_rgb.shape[:2]
+        ratio = self.margin_ratio if margin_ratio is None else margin_ratio
 
-        # 18% margin on all 4 borders
-        dx = int(round(bw * self.margin_ratio))
-        dy = int(round(bh * self.margin_ratio))
+        dx = int(round(bw * ratio))
+        dy = int(round(bh * ratio))
 
         x1 = max(0, x - dx)
         y1 = max(0, y - dy)
@@ -218,6 +239,12 @@ class FaceSwapDetector:
         fake_score = real_score if self.fake_index == 1 else 1 - real_score
         return fake_score
 
+    def _score_crop_tta(self, crop: np.ndarray) -> float:
+        """Run ONNX inference with horizontal-flip TTA for pose robustness."""
+        face_input = np.expand_dims(crop, axis=0)  # (1, 224, 224, 3)
+        face_flip = np.expand_dims(crop[:, ::-1, :].copy(), axis=0)
+        return 0.5 * (self.predict_crop(face_input) + self.predict_crop(face_flip))
+
     def predict_image(
         self,
         image_rgb: np.ndarray,
@@ -248,10 +275,8 @@ class FaceSwapDetector:
             crop = self.cropper.crop_and_format_face(image_rgb, bbox)
             has_face = True
 
-        # 2. Run ONNX inference with horizontal-flip TTA for pose robustness
-        face_input = np.expand_dims(crop, axis=0)  # (1, 224, 224, 3)
-        face_flip = np.expand_dims(crop[:, ::-1, :].copy(), axis=0)
-        fake_score = 0.5 * (self.predict_crop(face_input) + self.predict_crop(face_flip))
+        # 2. Run ONNX inference with horizontal-flip TTA
+        fake_score = self._score_crop_tta(crop)
 
         return {
             "score": round(fake_score, 4),
@@ -266,7 +291,8 @@ class FaceSwapDetector:
     ) -> Dict[str, Any]:
         """Process sampled video frames with deepfakeguard-v2 face-swap detection.
 
-        Returns median frame score across usable faces and number of frames with usable faces.
+        Combines the standard 18% margin crop with a 4% tight inner-face crop so
+        border UI overlays (e.g. call banners, watermarks) cannot trigger false positives.
         """
         if not self.model_loaded and not self.load():
             return {
@@ -284,11 +310,16 @@ class FaceSwapDetector:
         for frame in frames_rgb:
             bbox = self.cropper.detect_face_bbox(frame)
             if bbox is not None:
-                crop = self.cropper.crop_and_format_face(frame, bbox)
-                face_input = np.expand_dims(crop, axis=0)
-                face_flip = np.expand_dims(crop[:, ::-1, :].copy(), axis=0)
+                wide_crop = self.cropper.crop_and_format_face(frame, bbox)
+                tight_crop = self.cropper.crop_and_format_face(frame, bbox, margin_ratio=0.04)
                 try:
-                    f_score = 0.5 * (self.predict_crop(face_input) + self.predict_crop(face_flip))
+                    s_wide = self._score_crop_tta(wide_crop)
+                    s_tight = self._score_crop_tta(tight_crop)
+                    # Reject UI/overlay edge spikes when the inner facial core looks authentic
+                    if (s_wide - s_tight) > 0.30 and s_tight < 0.45:
+                        f_score = 0.25 * s_wide + 0.75 * s_tight
+                    else:
+                        f_score = 0.50 * s_wide + 0.50 * s_tight
                     frame_scores.append(f_score)
                 except Exception as e:
                     inference_errors += 1

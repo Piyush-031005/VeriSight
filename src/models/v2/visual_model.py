@@ -52,7 +52,26 @@ class VisualV2Detector(nn.Module):
         else:
             import timm
 
-            base_net = timm.create_model(artifact_backbone, pretrained=pretrained, num_classes=0)
+            base_net = None
+            if pretrained:
+                try:
+                    from huggingface_hub import hf_hub_download
+
+                    local_weights = hf_hub_download(
+                        repo_id=f"timm/{artifact_backbone}.ra_in1k",
+                        filename="model.safetensors",
+                        local_files_only=True,
+                    )
+                    base_net = timm.create_model(
+                        artifact_backbone,
+                        pretrained=True,
+                        pretrained_cfg_overlay={"file": local_weights},
+                        num_classes=0,
+                    )
+                except Exception:
+                    base_net = None
+            if base_net is None:
+                base_net = timm.create_model(artifact_backbone, pretrained=pretrained, num_classes=0)
             self.artifact_net = base_net
             artifact_dim = getattr(base_net, "num_features", 1280)
             if freeze_backbones:

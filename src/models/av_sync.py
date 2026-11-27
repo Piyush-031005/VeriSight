@@ -189,7 +189,7 @@ class AVSyncDetector:
 
             min_face_dim = max(36, min(img_w, img_h) // 10)
             faces = face_cascade.detectMultiScale(
-                gray, scaleFactor=1.1, minNeighbors=6, minSize=(min_face_dim, min_face_dim)
+                gray, scaleFactor=1.1, minNeighbors=5, minSize=(min_face_dim, min_face_dim)
             )
 
             if len(faces) > 0:
@@ -240,6 +240,10 @@ class AVSyncDetector:
 
         cap.release()
         if faces_detected < 3 or len(motion_values) < 3:
+            if sampled >= 3:
+                mtcnn_res = self._extract_mouth_motion_mtcnn(video_path)
+                if mtcnn_res[0] is not None:
+                    return mtcnn_res
             return None, [], sampled, faces_detected
 
         signal = np.array(motion_values, dtype=np.float32)
@@ -247,6 +251,106 @@ class AVSyncDetector:
         if mx > 0:
             signal = signal / mx
         return signal, valid_indices, sampled, faces_detected
+
+    def _extract_mouth_motion_mtcnn(
+        self, video_path: Path
+    ) -> Tuple[Optional[np.ndarray], List[int], int, int]:
+        """Keyframe MTCNN fallback when Haar fails on glasses, warm light, or UI forehead overlays."""
+        import cv2
+        from src.inference.pretrained_models import FaceCropHelper
+
+        cropper = FaceCropHelper(target_size=224, margin_ratio=0.10)
+        if cropper._get_mtcnn() is None:
+            return None, [], 0, 0
+
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            return None, [], 0, 0
+
+        video_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        step = max(1, int(round(video_fps / max(self.sample_fps, 1.0))))
+        max_sampled_frames = 150
+
+        sampled_grays: List[np.ndarray] = []
+        sampled_rgbs: List[np.ndarray] = []
+        frame_idx = 0
+        while len(sampled_grays) < max_sampled_frames:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_idx += 1
+            if frame_idx % step != 0:
+                continue
+            fh, fw = frame.shape[:2]
+            if fw > 480:
+                scale = 480.0 / fw
+                frame = cv2.resize(frame, (480, max(1, int(round(fh * scale)))))
+            sampled_rgbs.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            sampled_grays.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+        cap.release()
+
+        sampled = len(sampled_grays)
+        if sampled < 3:
+            return None, [], sampled, 0
+
+        key_count = min(14, sampled)
+        key_indices = sorted(set(np.linspace(0, sampled - 1, key_count, dtype=int).tolist()))
+        detected_boxes: dict[int, Tuple[float, float, float, float]] = {}
+        for ki in key_indices:
+            bbox = cropper.detect_face_bbox(sampled_rgbs[ki])
+            if bbox is not None:
+                detected_boxes[ki] = tuple(float(v) for v in bbox)
+
+        if len(detected_boxes) < 3:
+            return None, [], sampled, len(detected_boxes)
+
+        known_k = sorted(detected_boxes.keys())
+        first_k, last_k = known_k[0], known_k[-1]
+        img_h, img_w = sampled_grays[0].shape[:2]
+        motion_values: List[float] = []
+        valid_indices: List[int] = []
+        prev_mouth_roi: Optional[np.ndarray] = None
+
+        for s_idx in range(first_k, last_k + 1):
+            if s_idx in detected_boxes:
+                bx, by, bw, bh = detected_boxes[s_idx]
+            else:
+                right_pos = int(np.searchsorted(known_k, s_idx))
+                k0 = known_k[right_pos - 1]
+                k1 = known_k[right_pos]
+                t = (s_idx - k0) / max(k1 - k0, 1)
+                b0, b1 = detected_boxes[k0], detected_boxes[k1]
+                bx = (1 - t) * b0[0] + t * b1[0]
+                by = (1 - t) * b0[1] + t * b1[1]
+                bw = (1 - t) * b0[2] + t * b1[2]
+                bh = (1 - t) * b0[3] + t * b1[3]
+
+            x, y, w, h = int(round(bx)), int(round(by)), int(round(bw)), int(round(bh))
+            my1 = max(0, min(img_h - 1, y + int(h * 0.60)))
+            my2 = max(my1 + 1, min(img_h, y + int(h * 0.95)))
+            mx1 = max(0, min(img_w - 1, x))
+            mx2 = max(mx1 + 1, min(img_w, x + w))
+            mouth_crop = sampled_grays[s_idx][my1:my2, mx1:mx2]
+            if mouth_crop.size == 0:
+                continue
+            mouth_roi = cv2.resize(mouth_crop, (64, 32))
+            if prev_mouth_roi is not None:
+                diff = np.abs(mouth_roi.astype(np.float32) - prev_mouth_roi.astype(np.float32))
+                motion_values.append(float(np.mean(diff)))
+                valid_indices.append(s_idx)
+            else:
+                motion_values.append(0.0)
+                valid_indices.append(s_idx)
+            prev_mouth_roi = mouth_roi
+
+        if len(motion_values) < 3:
+            return None, [], sampled, len(detected_boxes)
+
+        signal = np.array(motion_values, dtype=np.float32)
+        mx = float(signal.max())
+        if mx > 0:
+            signal = signal / mx
+        return signal, valid_indices, sampled, len(detected_boxes)
 
     def _get_face_detector(self):
         if self._face_detector is None:

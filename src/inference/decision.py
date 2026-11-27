@@ -30,7 +30,16 @@ def fuse(signals, strategy, fusion_band=(.4, .6)):
     score = None
     if strategy == "disagreement_max":
         rank = max((s.score for s in usable), default=None)
-        if "FAKE" in states.values():
+        fake_streams = [s for s in usable if states[s.name] == "FAKE"]
+        uncertain_streams = [s for s in usable if states[s.name] == "UNCERTAIN"]
+        real_streams = [s for s in usable if states[s.name] == "REAL"]
+        # Downgrade to UNCERTAIN only when a borderline (<0.80) single-stream FAKE occurs
+        # alongside an UNCERTAIN peer stream and no REAL contrast; strong (>=0.80) or corroborated
+        # manipulation flags still report FAKE.
+        strong_fake = any(s.score >= 0.80 for s in fake_streams)
+        if fake_streams and uncertain_streams and not real_streams and not strong_fake:
+            verdict = "UNCERTAIN"
+        elif fake_streams:
             verdict = "FAKE"
         elif usable and not missing and all(v == "REAL" for v in states.values()):
             verdict = "REAL"
@@ -45,7 +54,7 @@ def fuse(signals, strategy, fusion_band=(.4, .6)):
         if missing and verdict == "REAL":
             verdict = "UNCERTAIN"
     return dict(prediction=verdict, confidence=None if verdict == "UNCERTAIN" else
-                (rank if verdict == "FAKE" else 1-rank), disagreement=reason,
+                round(rank if verdict == "FAKE" else 1 - rank, 4), disagreement=reason,
                 fusion=dict(method=strategy, score=score, ranking_score=rank,
                             band=fusion_band if strategy == STRATEGIES[1] else None,
                             is_calibrated=False, checkpoint_loaded=False))
